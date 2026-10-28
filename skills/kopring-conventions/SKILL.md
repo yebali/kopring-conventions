@@ -1,6 +1,6 @@
 ---
 name: kopring-conventions
-description: Use when writing, reviewing, or refactoring Kotlin Spring Boot code — @RestController endpoints and Request/Response DTOs, @Service classes and Command/Result DTOs, JPA entities, Spring Data or QueryDSL Custom*Repository queries, @Transactional boundaries and locks, Flyway migrations, or Spring Boot tests (MockMvc, Testcontainers, MockK, AssertJ); also when auditing Kotlin code for convention violations.
+description: Use when writing, reviewing, or refactoring Kotlin Spring Boot code — @RestController endpoints and Request/Response DTOs, @Service classes and Command/Result DTOs, JPA entities, Spring Data or QueryDSL Custom*Repository queries, @Transactional boundaries and locks, Flyway migrations, or Spring Boot tests (MockMvc, Testcontainers, MockK, AssertJ); also application*.yml placeholders and @ConfigurationProperties classes; also when auditing Kotlin code for convention violations.
 ---
 
 # kopring-conventions
@@ -18,6 +18,7 @@ Read the **Hard Rules table (§1)** of every reference the change touches, then 
 | `*Service.kt`, `service/command/*Command.kt` / `*Result.kt`, domain exceptions, enums and `*EnumMapper`, Spring events, message consumers | [service.md](references/service.md) |
 | `@Transactional`, `TransactionRunner`, an external call near a transaction, locks | [transactions.md](references/transactions.md) |
 | `*Repository.kt`, `Custom*RepositoryImpl.kt`, entities, JSONB, Flyway migrations | [repository.md](references/repository.md) |
+| `application*.yml`, `${...}` placeholders, `@ConfigurationProperties` / `*Properties.kt` | [configuration.md](references/configuration.md) |
 | `*Test.kt` — how a test is written | [testing.md](references/testing.md) |
 | which tests must exist, coverage audits | [test-coverage.md](references/test-coverage.md) |
 | a rule seems wrong for the case at hand | [rationale.md](references/rationale.md) |
@@ -38,6 +39,7 @@ Without this skill, an agent writing a feature gets these wrong. Check each one 
 - **REP-8/9**: two or more filters go into a `*Query` object, read through `pageByQuery` / `listByQuery`.
 - **STY-1/10/11**: log through the inherited `logger`. Put a blank line before the final `return`. Use named arguments for calls with 2+ arguments.
 - **STY-16–19**: KDoc and line comments are in Korean, current state only, and appear only when their trigger applies. Inline single-use intermediates.
+- **CFG-12/15**: a `@ConfigurationProperties` field is read by code, and its default lives in the yml only, never as a Kotlin default.
 - **STY-21–28**: keep public methods to about 20 lines. Private-call depth is at most 2. Use the standard library and the plain option first, and add no abstraction without a second real use.
 - **TST-5/6/21**: group tests with `@Nested` and name tests and groups with Korean backtick sentences, without `@DisplayName`. Assert with AssertJ only.
 
@@ -54,6 +56,7 @@ Rule IDs take the form `PREFIX-N`:
 | `REP` | Repositories and entities |
 | `TST` | Test mechanics |
 | `COV` | Test coverage |
+| `CFG` | Configuration properties |
 
 The IDs come from the codebase these rules were extracted from and are never renumbered. Gaps in a sequence are project-specific rules that were removed.
 
