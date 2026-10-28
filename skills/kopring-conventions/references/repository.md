@@ -31,6 +31,7 @@
 | REP-23 | | *JSONB:* JSONB queries go through one shared JSONB query util; JSONB values compare and sort as text | [§7](#7-jsonb) |
 | REP-24 | | *JSONB:* an insert-only entity with nested-collection JSONB is `@Immutable` | [§7](#7-jsonb) |
 | REP-25 | | *JSONB:* external payload keys are normalized with `@JsonAlias`; raw payloads are never stored | [§7](#7-jsonb) |
+| REP-26 | | *If the project uses pgvector:* embedding similarity goes through `cosineDistanceTo` / `minDistanceTo`; the vector dimension is never hard-coded | [§7](#7-jsonb) |
 | REP-27 | | Soft delete is `deletedAt` + `isDeleted` + `delete()`, filtered in every query, never by `@SQLRestriction`/`@Where` | [§8](#8-soft-delete) |
 | REP-28 | | A unique column on a soft-delete entity has a partial unique index | [§8](#8-soft-delete) |
 | REP-29 | | Owning relations cascade `ALL` with `orphanRemoval`; soft-delete parents and high-volume data do not (listed exceptions) | [§9](#9-cascade-and-bulk-delete) |
@@ -219,6 +220,8 @@ Example: [REP-21](examples/repository.md#rep-21--entity-layer-and-computed-prope
 - ❌ Never on an updatable entity — `@Immutable` silently ignores dirty-checked UPDATEs, and Hibernate rejects a bulk UPDATE on it (a bulk DELETE is allowed). Check `var` fields and repository call sites first.
 
 **REP-25** — External payload keys are normalized with Jackson `@JsonAlias` on the typed payload class's properties (`PaymentApproval.approvalNumber` aliases `approvalNo`). A mapper converts the raw payload into the typed class, which serializes it into the JSONB column (`payment.approval`). The raw external payload is never stored verbatim.
+
+**REP-26** — *If the project uses pgvector.* Use `cosineDistanceTo` for one embedding and `minDistanceTo(embeddings)` for many; the latter wraps PostgreSQL `LEAST()` across the reference embeddings, and a single embedding yields the distance directly. Both live in one shared query util. Convert a similarity threshold with `maxCosineDistance = 1.0 - minSimilarity` (`minSimilarity` runs 0.0–1.0, 1.0 = identical); cosine distance runs from 0.0 (identical) to 2.0 (opposite). The embedding dimension differs per column: never hard-code it, read it from the column definition (`vector(N)`).
 
 Example: [REP-22 · REP-23 · REP-24](examples/repository.md#rep-22--rep-23--rep-24--jsonb).
 

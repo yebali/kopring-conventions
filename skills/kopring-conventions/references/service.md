@@ -38,6 +38,7 @@
 | SVC-30 | | `@Service` only for a transactional domain use-case entry point; other beans are `@Component` with a role suffix | [§10](#10-service-vs-component) |
 | SVC-31 | | Drop a bean's suffix and keep it only if what remains is not a usable name | [§10](#10-service-vs-component) |
 | SVC-33 | | Events for AFTER_COMMIT or asynchronous listeners carry ids and values, never entities or the authenticated principal object | [§11](#11-spring-events) |
+| SVC-34 | | Every `@TransactionalEventListener` sets `fallbackExecution = true` | [§11](#11-spring-events) |
 | SVC-35 | | Listener methods are `on{Event}`; the publisher field is `applicationEventPublisher` | [§11](#11-spring-events) |
 | SVC-37 | | A failed message is redelivered up to the maximum attempts, then dead-lettered; a periodic snapshot may be acked and dropped | [§12](#12-message-consumers) |
 
@@ -355,6 +356,8 @@ Example: [SVC-30 · SVC-31](examples/service.md#svc-30--svc-31--service-vs-compo
 Choose the listener by what the publisher needs: a synchronous `@EventListener` for a write that must be atomic with the publisher's transaction, `@TransactionalEventListener(AFTER_COMMIT)` for an effect that runs once the write is durable ([TX-3](transactions.md#3-external-calls-and-compensation) option 2, [§6.3](#63-breaking-bean-cycles-without-lazy) technique 3). Event class names follow [STY-52](code-style.md#18-transport-dto-suffix) (`*Event` in-process, `*Message` over a broker).
 
 **SVC-33** — An event consumed by an `AFTER_COMMIT` or asynchronous listener carries ids and values only. It never carries a JPA entity, which is detached once the transaction commits, and never the authenticated principal object: pass `actorId` and the fields the listener needs. A synchronous `@EventListener` running in the publisher's transaction may receive entities.
+
+**SVC-34** — Every `@TransactionalEventListener` sets `fallbackExecution = true`. Without it, an event published outside a transaction is silently dropped: the listener never runs and nothing is logged.
 
 **SVC-35** — A listener method is named `on{EventName}` (`onOrderCanceled` for `OrderCanceledEvent`), and the field holding the publisher is `applicationEventPublisher`.
 
