@@ -10,8 +10,10 @@ Kotlin + Spring Boot coding conventions as agent skills: controllers, services, 
 | `coding-workflow` | Set the baseline for any coding task: apply the rules while writing, run the lint before saying done, plan and review parallel subagent work. |
 | `convention-check` | Audit production and test code against the rules, report violations and fix the ones a rule decides. |
 | `structure-check` | Find code that follows every rule yet is too complex or tangled, and write a refactoring plan. It never edits code. |
+| `sync-docs` | Find where the markdown docs no longer match the code and fix the docs. It never edits code. |
+| `test-code` | Write MockMvc integration tests for the code changed in the current diff, following the testing and coverage rules. |
 
-An installed skill is also a slash command: `/kopring-conventions`, `/coding-workflow`, `/convention-check`, `/structure-check`.
+An installed skill is also a slash command: `/kopring-conventions`, `/coding-workflow`, `/convention-check`, `/structure-check`, `/sync-docs`, `/test-code`.
 
 ## Install
 
@@ -34,6 +36,7 @@ The rules live in `skills/kopring-conventions/references/`. Each document starts
 | `REP` | `repository.md` | Repositories, queries, entities, migrations |
 | `TST` | `testing.md` | How a test is written |
 | `COV` | `test-coverage.md` | Which tests a suite needs |
+| `CFG` | `configuration.md` | Environment placeholders and `@ConfigurationProperties` classes |
 
 `rationale.md` records why a rule exists. `examples/` holds one worked example file per layer. Identifiers are never renumbered; a gap in a sequence is a project-specific rule that was removed. A `⚠` marks a rule whose violation corrupts data, breaks the wire contract or misleads every reader.
 
@@ -56,6 +59,8 @@ skills/
   coding-workflow/       SKILL.md
   convention-check/      SKILL.md, scripts/blank-line-before-return.sh
   structure-check/       SKILL.md, scripts/structure-metrics.sh
+  sync-docs/             SKILL.md
+  test-code/             SKILL.md
 ```
 
 The installer only discovers skills under `skills/` when the repository root has no `SKILL.md`, so keep it that way. `convention-check` and `structure-check` link to `../kopring-conventions/references/`, which works when the skills are installed side by side.

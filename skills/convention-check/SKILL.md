@@ -163,7 +163,7 @@ After the rule-decided fixes are applied and verified, ask the user about every 
 The audit changes **code** (annotations, comments, signatures, file splits, tests). Those changes can make the project's markdown docs stale.
 
 - **Gate**: update docs only when a fix changed something a doc can cite — a class/file name or location, a public signature, an enum value, a config key or default, an `ErrorCode`, an API default (page size, null fields, filter semantics), or a convention rule. Comment-only edits, private helper inlining, local-variable folding and added tests cannot drift a doc: run the project's docs check if it has one, and write `docs sync skipped — no doc-visible change` in the report.
-- When the gate is open, grep the project's docs (`README`, `AGENTS.md` / `CLAUDE.md`, `docs/`) for the changed names and reconcile them with the modified code.
+- When the gate is open, run the `sync-docs` skill: it greps the project's docs (`README`, `AGENTS.md` / `CLAUDE.md`, `docs/`) for the changed names and reconciles them with the modified code, without editing code.
 - If this run added or changed a convention *rule* (not just applied existing ones), put the rule body in the owning reference's Hard Rules table (next identifier of its prefix) and only its rationale in `references/rationale.md`.
 
 ## Output Format
