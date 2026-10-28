@@ -1,6 +1,6 @@
 ---
 name: coding-workflow
-description: Use when starting ANY coding task in a Kotlin Spring Boot repository — implementing, refactoring, fixing bugs, writing or running tests, exploring code, or auditing — before the first code read or edit, and before dispatching ANY subagent. Sets the always-on baseline: apply the kopring-conventions rules while writing, run the lint before saying done, and plan, tier and review parallel subagent work.
+description: "Use when starting ANY coding task in a Kotlin Spring Boot repository — implementing, refactoring, fixing bugs, writing or running tests, exploring code, or auditing — before the first code read or edit, and before dispatching ANY subagent. Sets the always-on baseline: apply the kopring-conventions rules while writing, run the lint before saying done, and plan, tier and review parallel subagent work."
 ---
 
 # Coding Workflow — Always-On Baseline
