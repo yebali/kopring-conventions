@@ -1,6 +1,6 @@
 ---
 name: test-code
-description: "Use when the user wants integration tests written for the code changed in the current diff — MockMvc tests for new or modified @RestController endpoints and Service methods. Triggers on \"write tests for my changes\", \"generate integration tests\", \"test the changed code\", \"add MockMvc tests\", \"cover the diff\", \"test code\". Scoped to the change, not the whole module. NOT for auditing existing coverage across the codebase (use convention-check)."
+description: "Use when the user wants integration tests written for the code changed in the current diff — MockMvc tests for new or modified @RestController endpoints and Service methods. Triggers on \"write tests for my changes\", \"generate integration tests\", \"test the changed code\", \"add MockMvc tests\", \"cover the diff\", \"test code\". Scoped to the change, not the whole module. NOT for auditing existing coverage across the codebase (use check-conventions)."
 ---
 
 # Test Code — MockMvc Integration Tests for the Current Diff

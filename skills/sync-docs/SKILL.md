@@ -1,13 +1,13 @@
 ---
 name: sync-docs
-description: "Use when the user asks to sync or verify drift between the markdown docs and the actual code — the docs-versus-code axis. Triggers on \"sync docs\", \"docs audit\", \"check docs against code\", \"are the docs up to date\", \"outdated docs\", \"stale docs\", \"docs drift\", \"update the docs\"; also invoked by convention-check Phase 5 after code fixes. Auto-applies doc fixes and never edits code. NOT for code-versus-convention violations (use convention-check)."
+description: "Use when the user asks to sync or verify drift between the markdown docs and the actual code — the docs-versus-code axis. Triggers on \"sync docs\", \"docs audit\", \"check docs against code\", \"are the docs up to date\", \"outdated docs\", \"stale docs\", \"docs drift\", \"update the docs\"; also invoked by check-conventions Phase 5 after code fixes. Auto-applies doc fixes and never edits code. NOT for code-versus-convention violations (use check-conventions)."
 ---
 
 # Sync Docs — docs ↔ code Drift Audit (AUTO-APPLY)
 
 Reconcile the repository's markdown **docs** against the **code** and **auto-apply** the doc fixes — invocation itself is the approval. This skill **never edits code**. `<kopring-conventions>` below means that skill's directory; its `references/` hold the rule bodies.
 
-- **Sibling axis (routing only)**: code ↔ convention → `convention-check`, which invokes this skill in its Phase 5.
+- **Sibling axis (routing only)**: code ↔ convention → `check-conventions`, which invokes this skill in its Phase 5.
 
 **Apply policy**: **auto-applies the doc fixes** from Phase 2 / 2B with **no confirmation gate**; **never edits code**.
 

@@ -8,12 +8,12 @@ Kotlin + Spring Boot coding conventions as agent skills: controllers, services, 
 |---|---|
 | `kopring-conventions` | Write, review or refactor Kotlin Spring Boot code. Holds the rule references, worked examples and `scripts/convention-lint.sh`. |
 | `coding-workflow` | Set the baseline for any coding task: apply the rules while writing, run the lint before saying done, plan and review parallel subagent work. |
-| `convention-check` | Audit production and test code against the rules, report violations and fix the ones a rule decides. |
+| `check-conventions` | Audit production and test code against the rules, report violations and fix the ones a rule decides. |
 | `structure-check` | Find code that follows every rule yet is too complex or tangled, and write a refactoring plan. It never edits code. |
 | `sync-docs` | Find where the markdown docs no longer match the code and fix the docs. It never edits code. |
 | `test-code` | Write MockMvc integration tests for the code changed in the current diff, following the testing and coverage rules. |
 
-An installed skill is also a slash command: `/kopring-conventions`, `/coding-workflow`, `/convention-check`, `/structure-check`, `/sync-docs`, `/test-code`.
+An installed skill is also a slash command: `/kopring-conventions`, `/coding-workflow`, `/check-conventions`, `/structure-check`, `/sync-docs`, `/test-code`.
 
 ## Install
 
@@ -57,13 +57,13 @@ It prints one `path:line: [ID] message` line per hit and exits 1 when anything i
 skills/
   kopring-conventions/   SKILL.md, references/, references/examples/, scripts/
   coding-workflow/       SKILL.md
-  convention-check/      SKILL.md, scripts/blank-line-before-return.sh
+  check-conventions/      SKILL.md, scripts/blank-line-before-return.sh
   structure-check/       SKILL.md, scripts/structure-metrics.sh
   sync-docs/             SKILL.md
   test-code/             SKILL.md
 ```
 
-The installer only discovers skills under `skills/` when the repository root has no `SKILL.md`, so keep it that way. `convention-check` and `structure-check` link to `../kopring-conventions/references/`, which works when the skills are installed side by side.
+The installer only discovers skills under `skills/` when the repository root has no `SKILL.md`, so keep it that way. `check-conventions` and `structure-check` link to `../kopring-conventions/references/`, which works when the skills are installed side by side.
 
 ## Changing a skill
 

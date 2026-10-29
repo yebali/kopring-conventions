@@ -1,13 +1,13 @@
 ---
 name: structure-check
-description: Use when the user wants to find Kotlin Spring Boot code that follows every convention yet is still too complex, low-cohesion, or entangled — the code-versus-structural-health axis. Produces a refactoring plan document and never edits code. Triggers on "structural audit", "cohesion audit", "find refactoring targets", "find complex code", "god service", "configuration is tangled", "simplify the structure", or a refactoring-plan request. NOT for convention violations (use convention-check).
+description: Use when the user wants to find Kotlin Spring Boot code that follows every convention yet is still too complex, low-cohesion, or entangled — the code-versus-structural-health axis. Produces a refactoring plan document and never edits code. Triggers on "structural audit", "cohesion audit", "find refactoring targets", "find complex code", "god service", "configuration is tangled", "simplify the structure", or a refactoring-plan request. NOT for convention violations (use check-conventions).
 ---
 
 # Structure Check — code ↔ structural-health Audit (PLAN ONLY)
 
 Find production code that is **hard to work in** — low cohesion, tangled configuration, one-off structures where a general one would do — and hand the result to another model as a refactoring plan document. This skill operates on the **code ↔ structural health** axis. `<kopring-conventions>` below means the `kopring-conventions` skill's directory; its `references/` hold the rules.
 
-**Why this is a separate axis, not part of `convention-check`**: `convention-check` is rule-bound by construction — it reports what a documented rule forbids. The findings this skill exists for **violate no rule**. A service injecting 49 dependencies, a setting whose effective value is assembled from four layers, a bespoke executor where a synchronous call fits — every one of those passes a convention audit clean. Nothing else looks for them.
+**Why this is a separate axis, not part of `check-conventions`**: `check-conventions` is rule-bound by construction — it reports what a documented rule forbids. The findings this skill exists for **violate no rule**. A service injecting 49 dependencies, a setting whose effective value is assembled from four layers, a bespoke executor where a synchronous call fits — every one of those passes a convention audit clean. Nothing else looks for them.
 
 **Apply policy**: **plan only** — **never edits code, configuration, or docs.** The single artifact is one new plan document.
 

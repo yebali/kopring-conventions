@@ -2,7 +2,7 @@
 # STY-10 — blank line before a block-body function's final top-level `return`.
 #
 # ktlint has no rule for this, so the convention is otherwise unenforceable unless
-# detekt is wired in. Invoked from convention-check Phase 2 (Check D). Run from
+# detekt is wired in. Invoked from check-conventions Phase 2 (Check D). Run from
 # anywhere inside the repo.
 #
 #   bash blank-line-before-return.sh          # report  (prints file:line, exits 1 if any)

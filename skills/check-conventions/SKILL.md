@@ -1,5 +1,5 @@
 ---
-name: convention-check
+name: check-conventions
 description: Use when the user wants to audit Kotlin code (production and tests) against the kopring-conventions rule set — the code-versus-convention axis. Triggers on "convention audit", "check conventions", "find rule violations", "@Service / @Component audit", "duplicate code review", "common method extraction review", "write the missing tests", or a request to scan a branch or the whole codebase for Kotlin Spring Boot convention violations. NOT for docs-versus-code drift.
 ---
 

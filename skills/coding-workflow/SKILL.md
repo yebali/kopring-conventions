@@ -9,10 +9,10 @@ Loaded at the start of every coding task. It owns the cross-cutting execution po
 
 ## Write it right the first time
 
-The `convention-check` skill catches what slipped through; it should find little. Before writing Kotlin, read the Hard Rules table of every `kopring-conventions` reference you touch and apply it while writing, not afterwards. The rules an audit reports most often are the code-style Hard Rules ([code-style.md](../kopring-conventions/references/code-style.md) §1), the comment policy (STY-16–18, §5), single-use intermediates (STY-19, §6), method shape (STY-21–24, §8), standard library first (STY-26, §9), and the plain option (STY-27–28, §10). The references own the rule text; put the rule IDs (`STY-19`, `SVC-15`, …) into every subagent prompt that edits Kotlin.
+The `check-conventions` skill catches what slipped through; it should find little. Before writing Kotlin, read the Hard Rules table of every `kopring-conventions` reference you touch and apply it while writing, not afterwards. The rules an audit reports most often are the code-style Hard Rules ([code-style.md](../kopring-conventions/references/code-style.md) §1), the comment policy (STY-16–18, §5), single-use intermediates (STY-19, §6), method shape (STY-21–24, §8), standard library first (STY-26, §9), and the plain option (STY-27–28, §10). The references own the rule text; put the rule IDs (`STY-19`, `SVC-15`, …) into every subagent prompt that edits Kotlin.
 
 **Before you say done**:
-1. `bash <kopring-conventions>/scripts/convention-lint.sh <touched .kt files>` and `bash <convention-check>/scripts/blank-line-before-return.sh` (whole tree, one awk pass) — both `total: 0`.
+1. `bash <kopring-conventions>/scripts/convention-lint.sh <touched .kt files>` and `bash <check-conventions>/scripts/blank-line-before-return.sh` (whole tree, one awk pass) — both `total: 0`.
 2. Run code-style §5.3 *Deciding a comment finding* on every comment you wrote and every new public declaration; fix what it flags now.
 
 ## Parallel dispatch & model tiering
