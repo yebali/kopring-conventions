@@ -1,6 +1,6 @@
 # Service Layer Conventions
 
-**Owns:** Service method signatures, Command/Result mapping, validation, exceptions and failure forms, cross-domain access, method order, writes and idempotency, enum layers, bean roles, Spring events, and message consumers. **Read when:** Editing a Service, a Command/Result, an enum mapper, an event listener, a message consumer, or a domain dependency.
+**Owns:** Service method signatures, Command/Result mapping, validation, exceptions and failure forms, cross-domain access and communication, method order, writes and idempotency, enum layers, bean roles, Spring events, and message consumers. **Read when:** Editing a Service, a Command/Result, an enum mapper, an event listener, a message consumer, or a domain dependency.
 
 ## 1. Hard Rules
 
@@ -37,10 +37,14 @@
 | SVC-29 | | An unknown external code is skipped with a WARN log, never stored or thrown | [§9.3](#93-unknown-external-values) |
 | SVC-30 | | `@Service` only for a transactional domain use-case entry point; other beans are `@Component` with a role suffix | [§10](#10-service-vs-component) |
 | SVC-31 | | Drop a bean's suffix and keep it only if what remains is not a usable name | [§10](#10-service-vs-component) |
-| SVC-33 | | Events for AFTER_COMMIT or asynchronous listeners carry ids and values, never entities or the authenticated principal object | [§11](#11-spring-events) |
+| SVC-33 | | An event carries ids plus the data its listeners need; never an entity, an `@Embeddable`, an entity-inner enum or the authenticated principal object | [§11](#11-spring-events) |
 | SVC-34 | | Every `@TransactionalEventListener` sets `fallbackExecution = true` | [§11](#11-spring-events) |
 | SVC-35 | | Listener methods are `on{Event}`; the publisher field is `applicationEventPublisher` | [§11](#11-spring-events) |
 | SVC-37 | | A failed message is redelivered up to the maximum attempts, then dead-lettered; a periodic snapshot may be acked and dropped | [§12](#12-message-consumers) |
+| SVC-38 | | Between deployables a state change travels over the message broker and an HTTP client only reads; domains inside one deployable follow SVC-39 | [§6](#6-cross-domain-access) |
+| SVC-39 | | Between domains of one deployable: compose outputs in the inbound adapter, inject another domain's Service only to use its answer, publish an event when a state change affects another domain | [§6](#6-cross-domain-access) |
+| SVC-40 | | A listener that must commit with the publisher is a synchronous `@EventListener`; one that may run after commit is `AFTER_COMMIT` and writes through `inNewTx` | [§11](#11-spring-events) |
+| SVC-41 | | The publishing domain owns the event class; the affected domain owns a thin listener that delegates to its own Service | [§11](#11-spring-events) |
 
 Service code also follows the cross-cutting rules: logging ([STY-1](code-style.md#2-baseline), [logging](code-style.md#12-logging)), single-use intermediates ([STY-19](code-style.md#6-single-use-intermediates)) and the plain option ([STY-27](code-style.md#10-prefer-the-plain-option)). Transaction boundaries, external calls and locks are TX rules in [transactions.md](transactions.md).
 
@@ -185,9 +189,41 @@ Example: [SVC-14 · SVC-15](examples/service.md#svc-14--svc-15--exception-declar
 
 ## 6. Cross-domain access
 
+A *deployable* is one application that is built, deployed and run on its own (`app-service`, `auth-service`); a *domain* is one `<domain>` package inside a deployable (`user`, `group`, `board`).
+
+**SVC-38** — The boundary decides the means of communication:
+
+| Boundary | State change or command | Read |
+|---|---|---|
+| Domain ↔ domain, same deployable | In-process `*Event` (SVC-39) | The other domain's Service (SVC-39) |
+| Deployable ↔ deployable | `*Message` over the message broker ([STY-52](code-style.md#18-transport-dto-suffix)) | HTTP client `*Client` ([CTL-25](controller.md#11-feign-clients)) |
+
+Between deployables of the same system, an HTTP client only reads — a guard check or a lookup whose answer the caller needs now (verifying a token, checking an account's status). It never changes the other deployable's state; that travels as a broker message the other deployable consumes. A third-party system outside the organization (a payment gateway, a mail provider) is not a deployable of the system: call its API as it requires, under [TX-2](transactions.md#3-external-calls-and-compensation).
+
+**SVC-39** — Between domains of one deployable, take the first row that fits:
+
+| # | The need | Form |
+|---|---|---|
+| 1 | Several domains' data gathered into one output (a response, a Command) | The inbound adapter calls each domain's Service and composes the Results ([CTL-28](controller.md#13-thin-controller), [CTL-24](controller.md#10-non-http-inbound-adapters)); each Service reads only its own domain |
+| 2 | A Service's own logic uses another domain's answer — a lookup, a precondition check, a generated id | Inject that domain's Service and call it (never its Repository, SVC-17) |
+| 3 | A state change in one domain (create, update, delete, transition) affects another domain — its data, or a side effect such as a notification, an external call or a cache eviction — and the changing domain does not use the outcome | The changing domain publishes an `*Event`; the affected domain handles it in its own listener ([§11](#11-spring-events)). The publisher never injects the affected domain's Service for this |
+
+The test in one line: **asking** another domain → inject; **telling** it → event; **decorating** an output → adapter. A Service that calls another domain's Service and ignores the return value is telling, not asking (row 3). Following these rows keeps most bean cycles from forming ([SVC-20](#63-breaking-bean-cycles-without-lazy)).
+
+```kotlin
+// ✅ row 2 — creating a group needs the owner's answer: is the user active?
+val owner = userService.getActiveEntity(command.ownerId)
+// ✅ row 3 — the board domain reacts to the new group; GroupService never injects BoardService
+applicationEventPublisher.publishEvent(GroupCreatedEvent(groupId = group.id, ownerId = owner.id, name = group.name))
+// ❌ row 3 written as an injection — the return value is unused, so this is telling, not asking
+boardService.createDefaultBoard(CreateDefaultBoardCommand(groupId = group.id))
+```
+
+Example: [SVC-38 – SVC-41](examples/service.md#svc-38--svc-39--svc-40--svc-41--cross-domain-communication).
+
 | Dependency | Allowed |
 |---|---|
-| A Service → B Service | ✅ |
+| A Service → B Service | ✅ only to use B's answer (SVC-39 row 2) |
 | A Service → B Repository | ❌ (SVC-17; exceptions in [§6.2](#62-repository-access-exceptions)) |
 | A Service throws B's exception | ❌ ([SVC-14](#5-exceptions-and-failure-forms)) |
 | A Service → B Entity via `B.getEntity()` | ⚠️ internal only ([SVC-2](#2-method-signatures)) |
@@ -235,8 +271,8 @@ Only these kinds of class may inject other domains' repositories (SVC-17). Every
 | Technique | When | Example |
 |---|---|---|
 | (1) Move to the side-effect handler | A domain transaction needs a cross-service token or resource → the listener that owns the call mints it after commit | A `MemberEventListener` issues its own internal token for the downstream call |
-| (2) Compose in the controller | A read response is *decorated* with another domain's data → the controller calls both Services | `OrderController` composes payments through `PaymentService` |
-| (3) Publish a domain event | One domain bundles another's *writes* → publish instead of calling. Atomic → synchronous `@EventListener` (same transaction); post-commit is fine → `@TransactionalEventListener(AFTER_COMMIT)` ([§11](#11-spring-events)) | `OrderService.cancelOrder` publishes `OrderCanceledEvent`; a listener releases stock in the same transaction |
+| (2) Compose in the inbound adapter | A read output is *decorated* with another domain's data → the adapter calls both Services (the default of [SVC-39](#6-cross-domain-access) row 1) | `GroupController` composes the owner through `UserService` |
+| (3) Publish a domain event | One domain bundles another's *writes* → publish instead of calling (the default of [SVC-39](#6-cross-domain-access) row 3; listener kind by [SVC-40](#11-spring-events)) | `GroupService.createGroup` publishes `GroupCreatedEvent`; `BoardEventListener` creates the default board in the same transaction |
 | (4) Check for a fake cycle | Check whether the back-reference exists at all — with one direction only there is no cycle, so delete the `@Lazy` | A `@Lazy` whose reverse path does not exist |
 
 Do not extract the shared read contract into a small lookup `@Component` (the read-port escape); use (1)–(3). When `@Lazy` is truly unavoidable (a boundary whose split costs too much), its KDoc states why the cycle cannot be removed and under what condition it could.
@@ -353,9 +389,29 @@ Example: [SVC-30 · SVC-31](examples/service.md#svc-30--svc-31--service-vs-compo
 
 ## 11. Spring events
 
-Choose the listener by what the publisher needs: a synchronous `@EventListener` for a write that must be atomic with the publisher's transaction, `@TransactionalEventListener(AFTER_COMMIT)` for an effect that runs once the write is durable ([TX-3](transactions.md#3-external-calls-and-compensation) option 2, [§6.3](#63-breaking-bean-cycles-without-lazy) technique 3). Event class names follow [STY-52](code-style.md#18-transport-dto-suffix) (`*Event` in-process, `*Message` over a broker).
+An in-process event carries a state change from one domain to the domains it affects ([SVC-39](#6-cross-domain-access) row 3). Event class names follow [STY-52](code-style.md#18-transport-dto-suffix) (`*Event` in-process, `*Message` over a broker).
 
-**SVC-33** — An event consumed by an `AFTER_COMMIT` or asynchronous listener carries ids and values only. It never carries a JPA entity, which is detached once the transaction commits, and never the authenticated principal object: pass `actorId` and the fields the listener needs. A synchronous `@EventListener` running in the publisher's transaction may receive entities.
+**SVC-40** — Choose the listener by atomicity:
+
+| The affected domain's work | Listener | Runs | When it fails |
+|---|---|---|---|
+| Must commit and roll back with the publisher | Synchronous `@EventListener` | At `publishEvent`, inside the publisher's transaction | The publisher rolls back too |
+| May run once the publisher's write is durable | `@TransactionalEventListener(phase = AFTER_COMMIT, fallbackExecution = true)` | After the publisher commits | The publisher stays committed; only this effect is lost |
+
+An `AFTER_COMMIT` listener is only for an effect the publisher can do without when it fails — one that can be retried or reconciled later (a notification, a cache eviction, a message publish). Its DB writes run in `transactionRunner.inNewTx { }`: a `REQUIRED` boundary opened there joins the committed transaction and never commits ([TX-7](transactions.md#3-external-calls-and-compensation)). Its external calls are allowed ([TX-2](transactions.md#3-external-calls-and-compensation)).
+
+**SVC-41** — The publishing domain owns the event class in its `<domain>/event/` package, named as a fact that already happened ([STY-53](code-style.md#18-transport-dto-suffix): ✅ `GroupCreatedEvent` ❌ `CreateBoardEvent`). The affected domain owns the listener in its own `<domain>/event/` package: a `@Component` `*Listener` ([SVC-30](#10-service-vs-component)) that turns the event into a Command and delegates to its own domain's Service, with no business logic of its own — the same thin shape as [CTL-24](controller.md#10-non-http-inbound-adapters). The dependency points one way, from the listener's domain to the event class; the publisher never learns who listens.
+
+**SVC-33** — An event carries the publisher's ids plus the data its listeners need — value fields, the event's own inner data classes and service-layer enums — so no listener calls the publisher's Service back for the same data. It never carries a JPA entity, an `@Embeddable`, an entity-inner enum or the authenticated principal object: pass `actorId` and the fields the listener needs ([SVC-7](#3-command-and-result) holds Commands to the same rule). This holds for a synchronous listener too.
+
+```kotlin
+// ✅ ids + the data listeners need, in the event's own inner data class
+data class GroupDeletedEvent(val groupId: UUID, val actorId: UUID, val members: List<Member>) {
+    data class Member(val userId: UUID, val role: GroupRole)
+}
+// ❌ the entity ties every listener to the group domain's structure
+data class GroupDeletedEvent(val group: Group)
+```
 
 **SVC-34** — Every `@TransactionalEventListener` sets `fallbackExecution = true`. Without it, an event published outside a transaction is silently dropped: the listener never runs and nothing is logged.
 

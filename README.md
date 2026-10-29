@@ -30,7 +30,7 @@ The rules live in `skills/kopring-conventions/references/`. Each document starts
 | Prefix | Document | Area |
 |---|---|---|
 | `STY` | `code-style.md` | Style, comments, logging, files, naming |
-| `SVC` | `service.md` | Services, Command/Result, exceptions, events |
+| `SVC` | `service.md` | Services, Command/Result, exceptions, cross-domain communication, events |
 | `TX` | `transactions.md` | Transaction boundaries, external calls, locks |
 | `CTL` | `controller.md` | Controllers, wire DTOs, REST design |
 | `REP` | `repository.md` | Repositories, queries, entities, migrations |

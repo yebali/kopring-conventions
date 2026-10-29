@@ -13,7 +13,7 @@
 | CTL-5 | | DTOs a Request or Response uses are its own inner data classes; never reuse another Request/Response | [§4.1](#41-inner-data-classes) |
 | CTL-6 | | `controller/rest` DTOs never import an entity package | [§4.2](#42-no-entity-imports) |
 | CTL-7 | | A self-referential DTO declares its array schema explicitly | [§4.3](#43-self-referential-dtos) |
-| CTL-8 | | Every Response has `from(result)` and every Request has `toCommand(…)`; the controller never maps fields | [§4.4](#44-responsefrom-and-requesttocommand) |
+| CTL-8 | | Every Response has `from(result…)` (one Result per composed domain) and every Request has `toCommand(…)`; the controller never maps fields | [§4.4](#44-responsefrom-and-requesttocommand) |
 | CTL-9 | | Every wire property and query/path parameter carries an English OpenAPI `description` | [§4.5](#45-openapi-descriptions) |
 | CTL-10 | | No `@Operation` or `@Tag` | [§4.5](#45-openapi-descriptions) |
 | CTL-11 | | Paged responses use `PaginationResponse.from`; other lists use a wrapper Response; never `Page<T>` or a raw list | [§5](#5-response-wrappers-and-json) |
@@ -27,13 +27,13 @@
 | CTL-19 | | No PATCH; a DELETE takes no body | [§8](#8-restful-api-design) |
 | CTL-20 | | No screen- or widget-shaped endpoint; a system-administrator-only endpoint is under `/api/v1/admin` | [§8](#8-restful-api-design) |
 | CTL-21 | | One read endpoint per resource: type and lookup key are filters or response fields; `/search` only for POST reads with a body | [§8](#8-restful-api-design) |
-| CTL-22 | | An endpoint carries only resources its own service owns | [§8](#8-restful-api-design) |
+| CTL-22 | | An endpoint carries only resources its own deployable owns | [§8](#8-restful-api-design) |
 | CTL-23 | | A paged endpoint defaults to `@PageableDefault(size = 20)`; no per-controller page-size constants | [§9](#9-paging) |
-| CTL-24 | | Non-HTTP inbound adapters live in their protocol directory and stay thin | [§10](#10-non-http-inbound-adapters) |
-| CTL-25 | | A Feign client lives in `<domain>/client/` for one using domain, `<base>/client/` for two or more | [§11](#11-feign-clients) |
+| CTL-24 | | Non-HTTP inbound adapters (scheduler, broker or event listener) live in their protocol directory, stay thin and compose like a controller | [§10](#10-non-http-inbound-adapters) |
+| CTL-25 | | A Feign client lives in `<domain>/client/` for one using domain, `<base>/client/` for two or more; one that calls another deployable of the system only reads | [§11](#11-feign-clients) |
 | CTL-26 | | Feign timeouts come from `Duration` properties; each client translates failures with its `ErrorDecoder`; no raw `FeignException` leaves a Service | [§11](#11-feign-clients) |
 | CTL-27 | | An SSE endpoint declares its `@ApiResponse` schema (`oneOf` for variants) | [§12](#12-sse-endpoints) |
-| CTL-28 | | A controller method converts, delegates to one Service and converts back (listed exceptions) | [§13](#13-thin-controller) |
+| CTL-28 | | A controller method converts, delegates to the Service (to each domain's Service when composing) and converts back; it never branches on a result (listed exceptions) | [§13](#13-thin-controller) |
 | CTL-29 | | A wire DTO from a shared module maps through `Command.from(wireDto)` and back through `Result.toResponse()` | [§14](#14-shared-module-wire-dto-mapping) |
 
 Shared rules apply to controllers too: imports and section banners ([STY-2, STY-6](code-style.md#2-baseline)), comments ([STY-17](code-style.md#5-comments-and-kdoc)), the plain option ([STY-27](code-style.md#10-prefer-the-plain-option)), and DTO names ([STY-50](code-style.md#16-filler-suffixes-and-dto-casing)).
@@ -170,7 +170,7 @@ The `description` for such a field goes on `arraySchema`, not `schema` (§4.5).
 
 ### 4.4 Response.from and Request.toCommand
 
-**CTL-8** — Every `*Response` declares `companion object { fun from(result) }` and every `*Request` declares `toCommand(...)`. The controller calls `service.x(...).let(Response::from)` and never repeats the DTO's own field list (`Response(field = result.field, ...)`).
+**CTL-8** — Every `*Response` declares `companion object { fun from(result) }` and every `*Request` declares `toCommand(...)`. The controller calls `service.x(...).let(Response::from)` and never repeats the DTO's own field list (`Response(field = result.field, ...)`). A response that composes several domains (CTL-28) takes one named parameter per Result: `GetGroupResponse.from(group = groupResult, owner = ownerResult)`.
 
 ❌ `return GetOrderSummaryResponse(totalAmount = result.totalAmount, itemCount = result.itemCount, ...)` → ✅ `orderService.getOrderSummary(req.toCommand()).let(GetOrderSummaryResponse::from)`
 
@@ -328,7 +328,7 @@ A non-CRUD action (state transition, command) is an action endpoint under its re
 
 A new type adds an enum value, not an endpoint. A sub-resource read that only repeats what the parent's single read already returns is dropped (`GET /orders/{id}` carries `items[].shipments`, so there is no `GET /orders/{id}/shipments`). Filters, sort and paging are query parameters on the collection path; `/search` is reserved for `POST` reads whose filters need a body (nested arrays or maps, e.g. `POST /api/v1/admin/metrics/series/search` with `selectors[]`), and a `GET` read never ends in `/search`. The rule is about reads; a command or state transition keeps its own action endpoint (CTL-17).
 
-**CTL-22** — An endpoint's path, request and response carry only resources its own service owns. Another service's data is served by that service's own API, and the client calls it directly (a member's open-order count and order transfer live in the order service as `GET /admin/orders/open-counts` and `POST /admin/order-transfers`, not on the member service's deactivation endpoint). An internal service-to-service call does only side work that no guard or contract exposes — e.g. releasing a withdrawn member's order assignments. When a decision depends on another service's data, call it as a guard that rejects (the member service refuses deactivation while the member still has open orders); never move the other service's data through your own endpoint.
+**CTL-22** — An endpoint's path, request and response carry only resources its own deployable owns ([SVC-38](service.md#6-cross-domain-access)). Another deployable's data is served by that deployable's own API, and the client calls it directly (an account's sign-in history lives in `auth-service` as `GET /api/v1/accounts/{id}/sign-ins`, not on `app-service`'s user endpoint). When a decision depends on another deployable's data, read it through the HTTP client as a guard that rejects (`auth-service` refuses to delete an account while `app-service` reports groups the user still owns). Side work the change triggers in another deployable — e.g. handing over the groups a deleted user owned — travels as a broker message that deployable consumes. Never move the other deployable's data through your own endpoint.
 
 **Accepted exceptions to CTL-17 and CTL-21** (add a project's own here, each with its reason):
 
@@ -356,12 +356,13 @@ fun pageOrders(
 
 ## 10. Non-HTTP inbound adapters
 
-**CTL-24** — Non-HTTP inbound handlers go in a sibling directory of `controller/`, never in a Service directory. The adapter stays thin — payload → Command conversion → Service delegation only, no business logic.
+**CTL-24** — Non-HTTP inbound handlers go in a sibling directory of `controller/`, never in a Service directory. A scheduler, a broker listener and an in-process event listener are inbound adapters just as a controller is. Each stays thin — payload → Command conversion → Service delegation, no business logic — and, when a flow with no controller needs several domains' data, composes their Results the way a controller does ([CTL-28](#13-thin-controller)).
 
 | Protocol | Directory | Example |
 |---|---|---|
 | HTTP | `<domain>/controller/` | `OrderController.kt` |
 | Message broker | `<domain>/<broker>/` (e.g. `order/kafka/`) | `ShipOrderMessageListener.kt` |
+| In-process event | `<domain>/event/` of the affected domain ([SVC-41](service.md#11-spring-events)) | `BoardEventListener.kt` |
 
 A broker listener (`@KafkaListener`, a `MessageHandler`, …) lives in its protocol-specific directory, not `controller/`.
 
@@ -378,6 +379,8 @@ A broker listener (`@KafkaListener`, a `MessageHandler`, …) lives in its proto
 - when the using-domain count changes (1 ↔ 2+), the client moves — verified in PR review.
 
 A Feign client interface is an outbound port, so injecting another domain's `<domain>/client/*Client.kt` directly is allowed ([SVC-17](service.md#6-cross-domain-access) does not apply).
+
+A client that calls another deployable of the same system only reads — `GET`, or a `POST …/search` read ([CTL-21](#8-restful-api-design)). A state change in that deployable travels over the message broker instead ([SVC-38](service.md#6-cross-domain-access)). A third-party API is outside this limit.
 
 **CTL-26** — A Feign client's connect and read timeouts come from a properties class as `Duration`, never hard-coded. Each client registers an `ErrorDecoder` in its `config/<External>FeignConfig.kt` that maps downstream statuses to the calling domain's named exceptions (`PaymentFeignConfig` → `PaymentErrorDecoder`). A Service never lets a raw `FeignException` escape, and once the decoder exists there is no per-call-site `callXOrThrow` wrapper.
 
@@ -402,16 +405,16 @@ Choose `schema` to match the actual wire shape:
 
 ## 13. Thin controller
 
-**CTL-28** — A `@RestController` method body does only: ① receive the principal / `@PathVariable` / `@RequestParam` → ② `request.toCommand(...)` → ③ delegate to one Service → ④ `Response.from(result)`. Push the following out of the controller into the Service or a DTO factory:
+**CTL-28** — A `@RestController` method body does only: ① receive the principal / `@PathVariable` / `@RequestParam` → ② `request.toCommand(...)` → ③ delegate to the Service — or, when the response composes several domains, to each domain's Service ([SVC-39](service.md#6-cross-domain-access) row 1) → ④ `Response.from(results…)` (CTL-8). Push the following out of the controller into the Service or a DTO factory:
 
 | Leaked into controller ❌ | Belongs in |
 |---|---|
 | String→enum conversion (`Order.Status.valueOf(...)`) | `Command.from()` / Service (§14) |
 | payload parsing and validation (split, `UUID.fromString`, required-field check) | `Command.init {}` / Service |
-| composing 2+ Service results (cross-service join) | a Service method |
+| branching on or computing from a Service result (`if (group.isPublic) …`, a total over two Results) | a Service method |
 | `when(request.op) { … }` dispatch | a Service method |
 
-Allowed in the controller: flowing one Service result straight into `from`, extracting `authUser.id`.
+Allowed in the controller: flowing Service results straight into `from`, extracting `authUser.id`, and passing an id from one Result into the next Service's Command (`group.ownerId`). Composition calls each domain's Service for its own data; the controller decides nothing from what comes back.
 
 ```kotlin
 // ❌ parsing + enum + dispatch in the controller
@@ -426,7 +429,7 @@ fun handlePaymentCallback(@RequestBody request: PaymentCallbackRequest) {
 }
 ```
 
-This is the controller-side peer of [SVC-5](service.md#2-method-signatures) (no raw entity-field returns). More before and after (multi-way dispatch, cross-service join): [examples](examples/controller.md#ctl-28--thin-controller-before-and-after).
+This is the controller-side peer of [SVC-5](service.md#2-method-signatures) (no raw entity-field returns). More before and after (multi-way dispatch, cross-domain composition): [examples](examples/controller.md#ctl-28--thin-controller-before-and-after).
 
 **Service ↔ Controller boundary anti-patterns**:
 
@@ -436,8 +439,9 @@ This is the controller-side peer of [SVC-5](service.md#2-method-signatures) (no 
 | Controller calling a Service's bare `getEntity()` / `findEntityBy…()` / `listEntitiesBy…()` | those are internal service-to-service only ([SVC-2](service.md#2-method-signatures)) — an Entity never reaches the Controller |
 | a Service method returning `Response` (or an Entity) to the Controller | the Service returns `Result`; the Response is built by `Response.from(result)` (CTL-8) |
 | a Service method returning `List<*Result>` | wrapper Result and Response ([SVC-4](service.md#2-method-signatures), CTL-11) |
+| a Service injecting another domain's Service only to decorate its Result for a response | the controller composes both Results ([SVC-39](service.md#6-cross-domain-access) row 1) |
 
-**Exception — bean cycle**: when moving a cross-service composition into a Service would create a Spring bean cycle ([SVC-20](service.md#63-breaking-bean-cycles-without-lazy)), keep the composition in the controller; see [examples](examples/controller.md#ctl-28--thin-controller-before-and-after). The same holds for a post-commit external call: a controller may take what the Service's write returns (e.g. the storage files an edit orphaned) and delete them through another Service after the edit commits, so the edit's `@Transactional` never holds the storage call ([TX-2](transactions.md#3-external-calls-and-compensation)).
+**Exception — a post-commit external call**: a controller may take what the Service's write returns (e.g. the storage files an edit orphaned) and delete them through another Service after the edit commits, so the edit's `@Transactional` never holds the storage call ([TX-2](transactions.md#3-external-calls-and-compensation)).
 
 **Exception — the plain-option hoist**: a controller may call one remote reader before its Service and pass the answer in the Command, so the Service stays one plain `@Transactional` instead of wrapping the remote call in an `inTx` split ([STY-27](code-style.md#10-prefer-the-plain-option)). The reader call carries no decision of its own — the Service still validates against it.
 

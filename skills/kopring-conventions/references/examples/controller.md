@@ -185,22 +185,34 @@ fun handleCallback(@RequestBody request: PaymentCallbackRequest): PaymentCallbac
 // PaymentCallbackResponse.from(result) owns Item assembly
 ```
 
-### Cross-service join leaked into the controller
+### Cross-domain composition
 
-❌ Bad — composes two services + extracts ids in the controller.
+✅ Good — each Service reads only its own domain; the controller passes the owner id along and composes the two Results ([SVC-39](../service.md#6-cross-domain-access) row 1).
 ```kotlin
-fun pageOrders(...): PaginationResponse<OrderResponse> {
-    val result = orderService.pageOrders(PageOrderCommand(status, pageable))
-    val wishlistedIds = wishlistService.listWishlistedProductIds(authUser.id, result.page.content.flatMap { it.productIds })
-    return PaginationResponse.from(result.page, OrderResponse::from)
+@GetMapping("/{groupId}")
+fun getGroup(@PathVariable groupId: UUID, authUser: AuthUser): GetGroupResponse {
+    val group = groupService.getGroup(GetGroupCommand(groupId = groupId, userId = authUser.id))
+
+    return GetGroupResponse.from(group = group, owner = userService.getUser(GetUserCommand(userId = group.ownerId)))
 }
 ```
 
-✅ Good — `OrderService.pageOrders` owns the join (it injects the wishlist service and folds `wishlisted` into the Result); controller flows one result into `from`.
+❌ Bad — `GroupService` injects `UserService` only to fold the owner into its Result for the response.
 ```kotlin
-fun pageOrders(...): PaginationResponse<OrderResponse> =
-    orderService.pageOrders(request.toCommand(memberId = authUser.id, pageable = pageable))
-        .let { PaginationResponse.from(it.page, OrderResponse::from) }
+@Transactional(readOnly = true)
+fun getGroup(command: GetGroupCommand): GetGroupResult {
+    val group = getEntity(command.groupId)
+
+    return GetGroupResult.from(group = group, owner = userService.getUser(GetUserCommand(userId = group.owner.id)))
+}
 ```
 
-**Exception (keep composition in the controller)** — `OrderController.getOrder` composes `orderService.getOrder(...)` + `paymentService.listPaymentsByOrderId(...)`. `PaymentService` already injects `OrderService`, so folding the join into `OrderService` would add the reverse edge and close a bean cycle ([SVC-20](../service.md#63-breaking-bean-cycles-without-lazy)) — the controller-level composition stays instead.
+❌ Bad — the controller decides from a Result; the branch belongs in a Service.
+```kotlin
+fun getGroup(@PathVariable groupId: UUID, authUser: AuthUser): GetGroupResponse {
+    val group = groupService.getGroup(GetGroupCommand(groupId = groupId, userId = authUser.id))
+    val boards = if (group.isPublic) boardService.listBoards(ListBoardsCommand(groupId = groupId)) else null   // decision in the controller
+
+    return GetGroupResponse.from(group = group, boards = boards)
+}
+```

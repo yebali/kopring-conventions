@@ -310,7 +310,7 @@ STY-9, STY-10 and STY-19 are concrete forms of the same goal; where any of them 
 
 ## 10. Prefer the plain option
 
-**STY-27** — An advanced framework feature is introduced only when the plain form cannot express the work. The plain form is one `@Transactional`, a synchronous call, and assembly at the call site (the controller). The advanced forms are extra transaction boundaries (`inTx`, `REQUIRES_NEW`), a dedicated `ThreadPoolTaskExecutor` `@Configuration`, AOP, `@Async` and custom propagation.
+**STY-27** — An advanced framework feature is introduced only when the plain form cannot express the work. The plain form is one `@Transactional`, a synchronous call, and assembly at the call site (the inbound adapter). The advanced forms are extra transaction boundaries (`inTx`, `REQUIRES_NEW`), a dedicated `ThreadPoolTaskExecutor` `@Configuration`, AOP, `@Async` and custom propagation.
 
 Before opening a boundary, pass the **upper gate**:
 
@@ -549,7 +549,7 @@ For the same operation, the service input and the wire **share the verb-object a
 | `<domain>.repository.query` | `*Query` |
 | `<domain>.entity` | JPA entities |
 | `<domain>.enumerate` | service-layer enums |
-| `<domain>.event` | in-process `*Event` and their listeners |
+| `<domain>.event` | the in-process `*Event` classes this domain publishes, and the listeners for events from other domains that it reacts to ([SVC-41](service.md#11-spring-events)) |
 | `<domain>.exception` | the domain's named exceptions |
 | `<domain>.client` | a Feign client used by that domain only ([CTL-25](controller.md#11-feign-clients)) |
 | `<domain>.util` · `<domain>.config` | domain-internal utils (STY-15) and configuration |

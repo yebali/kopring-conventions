@@ -148,6 +148,92 @@ class InvoiceGenerator(...) { fun generate(command: GenerateInvoiceCommand): Gen
 @Service class AdvisoryLockService(...)
 ```
 
+## SVC-38 · SVC-39 · SVC-40 · SVC-41 — Cross-domain communication
+
+The deployable `app-service` holds the `user`, `group`, `board` and `notification` domains; `auth-service` is another deployable. Creating a group needs the owner's answer (SVC-39 row 2 → inject), creates the group's default board in the same transaction (row 3 → synchronous listener) and notifies the owner after commit (row 3 → `AFTER_COMMIT` listener).
+
+```kotlin
+// group/event/GroupCreatedEvent.kt — owned by the publishing domain, named as a past fact
+data class GroupCreatedEvent(val groupId: UUID, val ownerId: UUID, val name: String)
+
+// group/service/GroupService.kt — injects UserService for an answer; knows nothing about board or notification
+@Service
+class GroupService(
+    private val userService: UserService,
+    private val groupRepository: GroupRepository,
+    private val applicationEventPublisher: ApplicationEventPublisher,
+) {
+    @Transactional
+    fun createGroup(command: CreateGroupCommand): CreateGroupResult {
+        val group = groupRepository.save(command.toEntity(owner = userService.getActiveEntity(command.ownerId)))
+        applicationEventPublisher.publishEvent(GroupCreatedEvent(groupId = group.id, ownerId = command.ownerId, name = group.name))
+
+        return CreateGroupResult.from(group)
+    }
+}
+
+// board/event/BoardEventListener.kt — the board must commit with the group → synchronous
+@Component
+class BoardEventListener(private val boardService: BoardService) {
+    @EventListener
+    fun onGroupCreated(event: GroupCreatedEvent) {
+        boardService.createDefaultBoard(CreateDefaultBoardCommand(groupId = event.groupId))
+    }
+}
+
+// notification/event/NotificationEventListener.kt — a lost notification can be resent → after commit, in its own transaction
+@Component
+class NotificationEventListener(
+    private val notificationService: NotificationService,
+    private val transactionRunner: TransactionRunner,
+) {
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    fun onGroupCreated(event: GroupCreatedEvent) {
+        transactionRunner.inNewTx {
+            notificationService.notifyGroupCreated(NotifyGroupCreatedCommand(userId = event.ownerId, groupName = event.name))
+        }
+    }
+}
+```
+
+```kotlin
+// ❌ GroupService injects BoardService and NotificationService and ignores what they return — telling, not asking
+@Transactional
+fun createGroup(command: CreateGroupCommand): CreateGroupResult {
+    val group = groupRepository.save(command.toEntity(owner = userService.getActiveEntity(command.ownerId)))
+    boardService.createDefaultBoard(CreateDefaultBoardCommand(groupId = group.id))
+    notificationService.notifyGroupCreated(NotifyGroupCreatedCommand(userId = command.ownerId, groupName = group.name))   // also runs before commit
+
+    return CreateGroupResult.from(group)
+}
+```
+
+Between deployables (SVC-38):
+
+```kotlin
+// ✅ app-service reads auth-service through its HTTP client
+@FeignClient(name = "auth-service", configuration = [AuthFeignConfig::class])
+interface AccountClient {
+    @GetMapping("/api/v1/accounts/{accountId}")
+    fun getAccount(@PathVariable accountId: UUID): AccountResponse
+}
+
+// ✅ auth-service changes app-service's state through the broker; user/kafka/DeactivateUserMessageListener.kt consumes it
+@Component
+class DeactivateUserMessageListener(private val userService: UserService) {
+    @KafkaListener(topics = ["\${app.kafka.topics.deactivate-user}"])
+    fun onDeactivateUser(message: DeactivateUserMessage) {
+        userService.deactivateUser(DeactivateUserCommand(userId = message.userId))
+    }
+}
+
+// ❌ auth-service changes app-service's state over HTTP
+interface UserClient {
+    @PostMapping("/api/v1/users/{userId}/deactivation")
+    fun deactivateUser(@PathVariable userId: UUID)
+}
+```
+
 ## TX-1 · TX-5 — Transactional placement and the boundary API
 
 ```kotlin

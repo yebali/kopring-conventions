@@ -139,6 +139,12 @@ A consistent return shape, easy to extend with metadata, and a clear distinction
 
 **The only judgment axis is "does it replicate the layer tree."** A directory need not carry a layer name — as long as it does not replicate the layer tree, it is fine. When two placement schemes coexist in one domain, every new file becomes a guessing game. **The cost of flattening**: layer directories grow large, so inside them the domain name prefix is the only clue to which feature a file belongs to — the prefix is mandatory, not stylistic.
 
+### SVC-38 · SVC-39 Cross-domain communication
+
+**Domains stay separable only when each knows as little as possible about the others.** A Service that injects another domain's Service to push a write or to decorate its Result binds the two domains together: the publisher's code changes whenever a new domain needs to react, and two domains that call each other close a bean cycle. An event reverses the dependency — the reacting domain knows the event, the publisher knows nobody — and composing in the inbound adapter keeps every Service reading its own domain only. Injection stays for the one case an event cannot cover: the Service needs the answer to go on.
+
+**The deployable boundary follows the same split with different transport.** Inside one process an event is a method call with no network in between, so it can even share the publisher's transaction. Between deployables nothing is shared: a state change sent over HTTP fails when the other side is down and leaves the two sides inconsistent, while a broker message waits until the consumer is back. A read has no state to lose and its caller needs the answer now, so HTTP stays for reads.
+
 ## 4. Controller
 
 ### CTL-15 Limits are enforced where the bytes pass
@@ -153,9 +159,9 @@ Unifying everything to 200 OK loses the difference between "created" and "done" 
 
 A parameter-level default object doubly encodes the same "empty" state as a DTO field default. To allow an empty request, the client sends `{}` and every Request field carries a default.
 
-### CTL-28 Thin controller exceptions
+### CTL-28 Composition in the inbound adapter
 
-When moving a cross-service composition into a Service would close a Spring bean cycle, it stays in the controller instead.
+A response that shows several domains' data is a presentation need, not a business rule, so no domain Service should own it. When the adapter composes, each Service keeps returning its own domain's Result, the Results stay reusable by other callers, and no Service grows an injection whose only purpose is one screen. The adapter only passes ids along and never branches on what comes back; once a decision depends on a Result, it is logic and moves into a Service.
 
 ### CTL-22 Service ownership of endpoints
 
@@ -233,7 +239,7 @@ External systems evolve independently, so a code the enum does not know arrives 
 
 ### SVC-33 Event payloads
 
-An entity in an event read by an `AFTER_COMMIT` or asynchronous listener is detached by the time the listener runs, so a lazy association fails or reads stale state; an authentication object drags auth state into code that only needs the actor id.
+An entity in an event read by an `AFTER_COMMIT` or asynchronous listener is detached by the time the listener runs, so a lazy association fails or reads stale state; an authentication object drags auth state into code that only needs the actor id. A synchronous listener would see a live entity, but it would then depend on the publishing domain's entity structure, which undoes the separation the event exists for. Carrying the data listeners need, rather than ids alone, keeps a listener from calling the publisher's Service back — an injection in the reverse direction.
 
 ### STY-34 Entity change logging
 
