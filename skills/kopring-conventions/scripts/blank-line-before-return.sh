@@ -2,11 +2,14 @@
 # STY-10 — blank line before a block-body function's final top-level `return`.
 #
 # ktlint has no rule for this, so the convention is otherwise unenforceable unless
-# detekt is wired in. Invoked from check-conventions Phase 2 (Check D). Run from
-# anywhere inside the repo.
+# detekt is wired in. Used by coding-workflow (done gate) and check-conventions
+# (Check D). Run from anywhere inside the repo.
 #
-#   bash blank-line-before-return.sh          # report  (prints file:line, exits 1 if any)
-#   bash blank-line-before-return.sh --fix    # insert the missing blank lines
+#   bash blank-line-before-return.sh                  # report over the whole tree (prints file:line, exits 1 if any)
+#   bash blank-line-before-return.sh a.kt b.kt        # report over these files only
+#   bash blank-line-before-return.sh --fix a.kt b.kt  # insert the missing blank lines in these files
+#   bash blank-line-before-return.sh --fix            # … in the whole tree
+#   → exits 2 when no Kotlin source file was scanned
 #
 # Detection: a `return` that (a) is the last statement of its block — the next
 # line at or below its indent is the block's closing brace — and (b) is preceded
@@ -15,14 +18,26 @@
 # closing brace" check undercounts them roughly 4x.
 set -euo pipefail
 
-MODE="${1:-report}"
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+MODE=report
+if [ "${1:-}" = "--fix" ]; then MODE=--fix; shift; fi
 
-# One awk process for the whole tree — a per-file loop costs one fork per file.
+FILES=$(mktemp)
+trap 'rm -f "$FILES"' EXIT
+if [ "$#" -gt 0 ]; then
+    for f in "$@"; do case "$f" in *.kt) [ -f "$f" ] && printf '%s\n' "$f" ;; esac; done > "$FILES"
+else
+    cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    find . \( -path "*/src/main/kotlin/*" -o -path "*/src/test/kotlin/*" \) -name "*.kt" -not -path "*/build/*" | sort > "$FILES"
+fi
+if [ ! -s "$FILES" ]; then
+    echo "blank-line-before-return: no Kotlin source file was scanned" >&2
+    exit 2
+fi
+
+# One awk process for all files — a per-file loop costs one fork per file.
 # BSD awk has no ENDFILE, so each file is flushed when the next one starts.
 detect() {
-    find . \( -path "*/src/main/kotlin/*" -o -path "*/src/test/kotlin/*" \) -name "*.kt" -not -path "*/build/*" -print0 |
-        sort -z |
+    tr '\n' '\0' < "$FILES" |
         xargs -0 awk '
             function flush(   i, j, ci, closer) {
                 for (i = 2; i <= n; i++) {

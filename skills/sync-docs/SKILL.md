@@ -1,6 +1,6 @@
 ---
 name: sync-docs
-description: "Use when the user asks to sync or verify drift between the markdown docs and the actual code — the docs-versus-code axis. Triggers on \"sync docs\", \"docs audit\", \"check docs against code\", \"are the docs up to date\", \"outdated docs\", \"stale docs\", \"docs drift\", \"update the docs\"; also invoked by check-conventions Phase 5 after code fixes. Auto-applies doc fixes and never edits code. NOT for code-versus-convention violations (use check-conventions)."
+description: "Use when the user asks to sync or verify drift between the markdown docs and the actual code — the docs-versus-code axis. Triggers on \"sync docs\", \"docs audit\", \"check docs against code\", \"are the docs up to date\", \"outdated docs\", \"stale docs\", \"docs drift\"; also invoked by check-conventions Phase 5 (scoped mode) after code fixes. Auto-applies doc fixes and never edits code. NOT for writing documentation for a new feature, and NOT for code-versus-convention violations (use check-conventions)."
 ---
 
 # Sync Docs — docs ↔ code Drift Audit (AUTO-APPLY)
@@ -26,6 +26,15 @@ Two sources of truth are reconciled:
 - **Docs** — human-maintained claims about the system, prone to drift when code changes and docs don't.
 
 Find every claim the code contradicts, then correct the docs (never the code). Do not invent documentation for undocumented features — only correct existing claims and note demonstrable gaps.
+
+## Scoped mode
+
+When the caller passes a list of changed names (class, file, method, enum value, config key, `ErrorCode`, endpoint) — `check-conventions` Phase 5 does — the run is scoped to them:
+
+- Grep every doc scope of Phase 1 for those names only; a doc that mentions none is not read further.
+- Run Phase 2 on the matching docs, with the briefs limited to claims about those names.
+- Skip Phase 2B: the structural check is a full-repository pass the caller did not ask for.
+- Phase 3 applies only the fixes for those claims; Phase 4 reports them and names the names that matched no doc.
 
 ## Phase 1 — Discover documentation scopes
 

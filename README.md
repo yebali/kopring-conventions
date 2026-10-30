@@ -8,7 +8,7 @@ Kotlin + Spring Boot coding conventions as agent skills: controllers, services, 
 |---|---|
 | `kopring-conventions` | Write, review or refactor Kotlin Spring Boot code. Holds the rule references, worked examples and `scripts/convention-lint.sh`. |
 | `coding-workflow` | Set the baseline for any coding task: apply the rules while writing, run the lint before saying done, plan and review parallel subagent work. |
-| `check-conventions` | Audit production and test code against the rules, report violations and fix the ones a rule decides. |
+| `check-conventions` | Audit production and test code (and `application*.yml`) against the rules, fix the violations a rule decides, write missing tests and ask about the rest. It edits code. |
 | `structure-check` | Find code that follows every rule yet is too complex or tangled, and write a refactoring plan. It never edits code. |
 | `sync-docs` | Find where the markdown docs no longer match the code and fix the docs. It never edits code. |
 | `test-code` | Write MockMvc integration tests for the code changed in the current diff, following the testing and coverage rules. |
@@ -47,9 +47,10 @@ A project's own instructions (`CLAUDE.md`, `AGENTS.md`, `docs/`) override these 
 ```bash
 bash skills/kopring-conventions/scripts/convention-lint.sh              # whole repository
 bash skills/kopring-conventions/scripts/convention-lint.sh a.kt b.kt    # only these files
+bash skills/kopring-conventions/scripts/blank-line-before-return.sh [--fix] [a.kt b.kt]   # STY-10
 ```
 
-It prints one `path:line: [ID] message` line per hit and exits 1 when anything is found. `BASE_PACKAGE=com.acme` sets the root package for the fully-qualified-name check; the default is detected from the sources. The script covers only the greppable subset of the rules.
+Run them from the project's repository. `convention-lint.sh` prints one `path:line: [ID] message` line per hit; both scripts exit 1 when anything is found and 2 when no Kotlin source file was scanned. `BASE_PACKAGE=com.acme` sets the root package for the fully-qualified-name check; the default is detected from the sources. A project lists the exceptions its own rule document grants in `.convention-lint-ignore` at its root, one `path-glob:ID` per line. The lint covers only the greppable subset of the rules.
 
 ## Layout
 
@@ -57,7 +58,7 @@ It prints one `path:line: [ID] message` line per hit and exits 1 when anything i
 skills/
   kopring-conventions/   SKILL.md, references/, references/examples/, scripts/
   coding-workflow/       SKILL.md
-  check-conventions/      SKILL.md, scripts/blank-line-before-return.sh
+  check-conventions/     SKILL.md
   structure-check/       SKILL.md, scripts/structure-metrics.sh
   sync-docs/             SKILL.md
   test-code/             SKILL.md

@@ -74,13 +74,14 @@ A rule marked *"If the project uses X"* applies only when it does.
 ## Checking code
 
 ```bash
-bash scripts/convention-lint.sh              # whole repository
-bash scripts/convention-lint.sh a.kt b.kt    # only these files
+bash <kopring-conventions>/scripts/convention-lint.sh a.kt b.kt          # these files; no arguments = whole repository
+bash <kopring-conventions>/scripts/blank-line-before-return.sh a.kt b.kt # STY-10; --fix a.kt inserts the blank lines
 ```
 
-The path is relative to this skill's directory.
+`<kopring-conventions>` is this skill's directory; run the scripts from the project's repository, not from here.
 
-- **Output**: one `path:line: [ID] message` line per hit. The exit code is 1 when anything is found.
+- **Output**: one `path:line: [ID] message` line per hit (`path:line` for STY-10). The exit code is 1 when anything is found, and 2 when no Kotlin source file was scanned — never read exit 2 as clean.
 - **`BASE_PACKAGE=com.acme`**: sets the root package for the STY-2 FQN check. The default is detected from the sources.
+- **`.convention-lint-ignore`** at the project root: one `path-glob:ID` per line for an exception the project's own rule document grants.
 
 The script covers only the greppable subset of the rules. For a review or audit, run it first, then read the touched code against the Hard Rules tables of its layers.

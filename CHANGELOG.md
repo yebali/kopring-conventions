@@ -4,6 +4,12 @@ Rule identifiers added, changed, removed or renumbered, newest first. A consumin
 
 ## 2026-10-30
 
+Tooling:
+
+- `blank-line-before-return.sh` (STY-10) moved to `kopring-conventions/scripts/` and takes a file list; `--fix` touches only the files given.
+- `convention-lint.sh`: SVC-15 scoped to Services and Commands; SVC-13 no longer flags `logger.error`; STY-1 also flags `KotlinLogging.logger`; CTL-14 and TST-21 widened; new checks for CTL-3, CTL-10, CTL-12, CTL-19, SVC-20, STY-30, STY-43, REP-10, REP-27, TST-27; `.convention-lint-ignore` for project exceptions; exit 2 when no file was scanned.
+- `check-conventions` audits CFG rules and `application*.yml`, runs the scripts on the in-scope files only, and no longer edits the installed references. `sync-docs` gains a scoped mode for it. `test-code` takes committed branch changes and writes Service tests.
+
 Contradictions between rules, resolved:
 
 - **Added** `TST-33`: no test class forks the shared Spring context.
