@@ -319,12 +319,12 @@ class Order(
 
 ```kotlin
 // ❌ a stored copy of what the other properties already say (REP-34)
-var isExpired: Boolean = false                   // must be re-synced whenever expiresAt changes
-var totalPrice: Long = 0
+var totalPrice: Long = 0                         // must be re-synced whenever unitPrice or quantity changes
 
 // ✅ derived on read; nothing to keep in sync
-val isExpired: Boolean
-    get() = expiresAt.isBefore(ZonedDateTime.now())
 val totalPrice: Long
     get() = unitPrice * quantity
+
+// ✅ a time-relative judgement takes the time instead of reading the clock
+fun isExpiredAt(now: ZonedDateTime): Boolean = expiresAt.isBefore(now)
 ```

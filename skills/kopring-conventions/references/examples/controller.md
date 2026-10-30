@@ -109,32 +109,41 @@ fun getOrder(
 // ❌ restating the field name ("id"); @Parameter on @RequestBody or the principal; a new @Operation
 ```
 
-## CTL-30 · CTL-31 — Response fields
+## CTL-31 · CTL-32 — Response fields
 
 ```kotlin
-// ❌ every Result field copied, derivable values included
-data class OrderItemResponse(
-    val id: UUID,
-    val unitPrice: Long,
-    val quantity: Int,
-    val totalPrice: Long,        // unitPrice * quantity
-    val isExpired: Boolean,      // expiresAt is already here
-    val expiresAt: ZonedDateTime,
-    val internalMemo: String?,   // no screen reads it
-)
+// ❌ derivable values and an unread field copied from the Result
+data class ListOrderItemResponse(
+    val items: List<Item>,
+    val itemCount: Int,              // items.size
+    val totalQuantity: Int,          // items.sumOf { it.quantity }
+) {
+    data class Item(
+        val id: UUID,
+        val quantity: Int,
+        val deletedAt: ZonedDateTime?,
+        val isDeleted: Boolean,      // deletedAt != null
+        val internalMemo: String?,   // no screen reads it (CTL-32)
+    )
+}
 
 // ✅ what the frontend reads; it derives the rest
-data class OrderItemResponse(
-    val id: UUID,
-    val unitPrice: Long,
-    val quantity: Int,
-    val expiresAt: ZonedDateTime,
-)
+data class ListOrderItemResponse(
+    val items: List<Item>,
+) {
+    data class Item(
+        val id: UUID,
+        val quantity: Int,
+        val deletedAt: ZonedDateTime?,
+    )
+}
 
-// ✅ stays: the server owns the decision (CTL-31 exception)
+// ✅ stays: the server owns these (CTL-31 exceptions)
 data class OrderResponse(
     val id: UUID,
-    val canCancel: Boolean,      // permission and state verdict, not derivable on the client
+    val totalPrice: Long,            // discount and tax rules live on the server
+    val isExpired: Boolean,          // judged against the server's clock
+    val canCancel: Boolean,          // permission and state verdict
 )
 ```
 

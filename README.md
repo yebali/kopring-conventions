@@ -38,7 +38,7 @@ The rules live in `skills/kopring-conventions/references/`. Each document starts
 | `COV` | `test-coverage.md` | Which tests a suite needs |
 | `CFG` | `configuration.md` | Environment placeholders and `@ConfigurationProperties` classes |
 
-`rationale.md` records why a rule exists. `examples/` holds one worked example file per layer. Identifiers are never renumbered; a gap in a sequence is a project-specific rule that was removed. A `⚠` marks a rule whose violation corrupts data, breaks the wire contract or misleads every reader.
+`rationale.md` records why a rule exists. `examples/` holds one worked example file per layer. Identifiers are never renumbered once a consuming project relies on them; a gap in a sequence is a project-specific rule that was removed, or a number a consuming project uses for its own rule (`CTL-30`). A `⚠` marks a rule whose violation corrupts data, breaks the wire contract or misleads every reader.
 
 A project's own instructions (`CLAUDE.md`, `AGENTS.md`, `docs/`) override these rules. List only the differences there, keyed by rule ID, and cite the skill for the rest.
 
@@ -68,3 +68,10 @@ The installer only discovers skills under `skills/` when the repository root has
 ## Changing a skill
 
 Edit and commit here, push to `main`, then run the install command above in each place that uses the skills. Do not edit an installed copy.
+
+### Adding or changing a rule
+
+- A new rule takes its prefix's highest number + 1. A gap is never reused.
+- Before picking the number, check the project-rule document of each known consuming project (`docs/conventions/PROJECT_RULES.md`) for local identifiers above the current highest number, and skip them: a project rule with the same identifier silently overrides the skill rule there.
+- A new rule adds its Hard Rules row, its detail paragraph and a `rationale.md` entry; an example only when the shape is unfamiliar.
+- Record every added, changed, removed or renumbered identifier in [CHANGELOG.md](CHANGELOG.md).
