@@ -286,6 +286,7 @@ When an entity name is a Kotlin/Java reserved word, QueryDSL generates `keyword$
 - **`@ManyToOne` inside a domain too** — a reference is a reference whichever domain owns the target; a raw id field leaves the repository unable to take the parent instance and grows workarounds.
 - **`@Enumerated(STRING)`** — ordinals break when constants are reordered.
 - **`protected set`** — public setters let any caller bypass the transition methods that carry the guards and the STY-34 change log.
+- **Derived values are computed (REP-34)** — a stored copy of what other properties determine can disagree with them, and every new input adds a synchronization point in each transition method. A getter cannot be wrong. The cost is that QueryDSL cannot read it, which is why a value a query must filter or sort on in the database is the exception.
 - **`Persistable` only for bulk inserts** — with an application-assigned id, `save` takes the merge path and issues a SELECT first. That costs one query per row in `saveAll` batches but nothing measurable for single saves, while `Persistable` adds a `new` flag every entity would have to maintain.
 
 ### REP-24 Immutable insert-only JSONB entities

@@ -27,6 +27,7 @@
 | REP-19 | | `Persistable` only on entities saved in bulk with application-assigned ids | [§6](#6-entity-mapping) |
 | REP-20 | | Escape PostgreSQL keywords in `@Table`; no reserved words as property names | [§6](#6-entity-mapping) |
 | REP-21 | | Entities carry no Spring dependency; a delegated computed property needs its relation loaded | [§6](#6-entity-mapping) |
+| REP-34 | | Keep entities simple: a value derivable from the entity's own properties is a computed `get()` property, never a stored field or column (listed exceptions) | [§6](#6-entity-mapping) |
 | REP-22 | ⚠ | *If the project uses PostgreSQL JSONB:* a JSONB column carries both `@JdbcTypeCode(SqlTypes.JSON)` and `@Column(columnDefinition = "jsonb")` | [§7](#7-jsonb) |
 | REP-23 | | *JSONB:* JSONB queries go through one shared JSONB query util; JSONB values compare and sort as text | [§7](#7-jsonb) |
 | REP-24 | | *JSONB:* an insert-only entity with nested-collection JSONB is `@Immutable` | [§7](#7-jsonb) |
@@ -203,7 +204,9 @@ Example: [REP-14](examples/repository.md#rep-14--entity-column-policy).
 
 **REP-21** — `@Entity` + `@Table`; computed values in `get()` backing-property style; `@EntityListeners` for lifecycle hooks; no Spring dependency in `entity/`. A related entity's value is delegated through a computed property instead of a duplicated column (`OrderItem.productName get() = product.name`); the related entity must be loaded (`@EntityGraph`/`fetchJoin()`) before the property is read outside a transaction, or `LazyInitializationException` fires.
 
-Example: [REP-21](examples/repository.md#rep-21--entity-layer-and-computed-property).
+**REP-34** — Keep an entity simple: a property holds a fact that cannot be derived, and a value that follows from the entity's other properties is computed in a `get()` property instead of being stored (`isDeleted` from `deletedAt`, `OrderItem.totalPrice` from `unitPrice * quantity`, an `isExpired` from `expiresAt`). Do not add a column, a `var` or a transition-method assignment for it: a stored copy can disagree with its inputs, and each new input then has to be synchronized by hand. Exceptions: a value a query must filter or sort on in the database (a getter is invisible to QueryDSL — derive it in the predicate from the stored inputs, and store it only when that predicate cannot be indexed or is too costly), and a snapshot that must stay fixed when its inputs change later (an order's price at purchase time).
+
+Example: [REP-21 · REP-34](examples/repository.md#rep-21--rep-34--entity-layer-and-computed-property).
 
 ## 7. JSONB
 

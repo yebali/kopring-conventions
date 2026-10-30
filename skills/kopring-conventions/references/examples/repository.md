@@ -292,7 +292,7 @@ orderItemRepository.deleteAll(order.items)
 orderRepository.delete(order)
 ```
 
-## REP-21 — Entity layer and computed property
+## REP-21 · REP-34 — Entity layer and computed property
 
 ```kotlin
 @Entity
@@ -315,4 +315,16 @@ class Order(
     val memberGrade: MemberGrade                 // delegated — don't duplicate the column
         get() = member.grade
 }
+```
+
+```kotlin
+// ❌ a stored copy of what the other properties already say (REP-34)
+var isExpired: Boolean = false                   // must be re-synced whenever expiresAt changes
+var totalPrice: Long = 0
+
+// ✅ derived on read; nothing to keep in sync
+val isExpired: Boolean
+    get() = expiresAt.isBefore(ZonedDateTime.now())
+val totalPrice: Long
+    get() = unitPrice * quantity
 ```
