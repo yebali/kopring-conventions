@@ -395,7 +395,7 @@ A broker listener (`@KafkaListener`, a `MessageHandler`, …) lives in its proto
 
 A Feign client interface is an outbound port, so injecting another domain's `<domain>/client/*Client.kt` directly is allowed ([SVC-17](service.md#6-cross-domain-access) does not apply).
 
-A client that calls another deployable of the same system only reads — `GET`, or a `POST …/search` read ([CTL-21](#8-restful-api-design)). A state change in that deployable travels over the message broker instead ([SVC-38](service.md#6-cross-domain-access)). A third-party API is outside this limit.
+A client that calls another deployable of the same system makes only calls the caller waits on — a read (`GET`, or a `POST …/search` read, [CTL-21](#8-restful-api-design)) or a command whose result the caller returns or whose failure must reach the caller. A state change the caller does not wait for travels over the message broker instead ([SVC-38](service.md#6-cross-domain-access)). A third-party API is outside this limit.
 
 **CTL-26** — A Feign client's connect and read timeouts come from a properties class as `Duration`, never hard-coded. Each client registers an `ErrorDecoder` in its `config/<External>FeignConfig.kt` that maps downstream statuses to the calling domain's named exceptions (`PaymentFeignConfig` → `PaymentErrorDecoder`). A Service never lets a raw `FeignException` escape, and once the decoder exists there is no per-call-site `callXOrThrow` wrapper.
 

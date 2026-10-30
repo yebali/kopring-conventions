@@ -211,14 +211,18 @@ fun createGroup(command: CreateGroupCommand): CreateGroupResult {
 Between deployables (SVC-38):
 
 ```kotlin
-// ✅ app-service reads auth-service through its HTTP client
+// ✅ the caller waits on a read — app-service needs the account to go on, so it reads auth-service through its HTTP client
 @FeignClient(name = "auth-service", configuration = [AuthFeignConfig::class])
 interface AccountClient {
     @GetMapping("/api/v1/accounts/{accountId}")
     fun getAccount(@PathVariable accountId: UUID): AccountResponse
+
+    // ✅ the caller waits on a write — the end user receives the copied file, so the call is HTTP
+    @PostMapping("/api/v1/files/copy")
+    fun copyFile(@RequestBody request: CopyFileRequest): CopyFileResponse
 }
 
-// ✅ auth-service changes app-service's state through the broker; user/kafka/DeactivateUserMessageListener.kt consumes it
+// ✅ the caller does not wait — auth-service tells app-service to hand over a deleted user's groups; user/kafka/DeactivateUserMessageListener.kt consumes it
 @Component
 class DeactivateUserMessageListener(private val userService: UserService) {
     @KafkaListener(topics = ["\${app.kafka.topics.deactivate-user}"])
@@ -227,7 +231,7 @@ class DeactivateUserMessageListener(private val userService: UserService) {
     }
 }
 
-// ❌ auth-service changes app-service's state over HTTP
+// ❌ the same hand-over over HTTP, with the result discarded — it fails when app-service is down and leaves the two sides inconsistent
 interface UserClient {
     @PostMapping("/api/v1/users/{userId}/deactivation")
     fun deactivateUser(@PathVariable userId: UUID)

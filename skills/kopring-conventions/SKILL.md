@@ -32,7 +32,7 @@ Without this skill, an agent writing a feature gets these wrong. Check each one 
 - **STY-5/29**: ids are `UUID`, and persisted and DTO timestamps are `ZonedDateTime`. Never use `Long` ids or `Instant` fields.
 - **STY-12/54**: put one top-level type per file. Lay out packages as `controller/`, `controller/rest/`, `service/`, `service/command/`, `repository/`, `entity/`. Never use `api/`, `application/` or `domain/`.
 - **SVC-3/4/8**: a Service takes a Command and returns a `*Result`, never a raw `Page`/`List` or a view type. Convert with `request.toCommand()`, `command.toEntity()` and `Result.from(entity)`.
-- **SVC-38/39**: between domains of one deployable, compose outputs in the controller (or scheduler or listener), inject another domain's Service only when you use its answer, and publish an `*Event` when your state change affects another domain. Between deployables, state changes go over the message broker and HTTP clients only read.
+- **SVC-38/39**: between domains of one deployable, compose outputs in the controller (or scheduler or listener), inject another domain's Service only when you use its answer, and publish an `*Event` when your state change affects another domain. Between deployables, a call the caller waits on is an HTTP client call and a state change it does not wait for goes over the message broker as a `*Message`.
 - **SVC-9/10**: `check*` throws. Structural validation goes in `Command.init {}`, never Bean Validation (CTL-14).
 - **SVC-13/15**: write exception messages in English and throw named domain exceptions, never generic ones.
 - **TX-1/2**: put `@Transactional` on methods, never on the class. Make no external call inside a transaction; use an `AFTER_COMMIT` listener or call it outside the transaction.

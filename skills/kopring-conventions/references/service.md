@@ -41,8 +41,8 @@
 | SVC-34 | | Every `@TransactionalEventListener` sets `fallbackExecution = true` | [§11](#11-spring-events) |
 | SVC-35 | | Listener methods are `on{Event}`; the publisher field is `applicationEventPublisher` | [§11](#11-spring-events) |
 | SVC-37 | | A failed message is redelivered up to the maximum attempts, then dead-lettered; a periodic snapshot may be acked and dropped | [§12](#12-message-consumers) |
-| SVC-38 | | Between deployables a state change travels over the message broker and an HTTP client only reads; domains inside one deployable follow SVC-39 | [§6](#6-cross-domain-access) |
-| SVC-39 | | Between domains of one deployable: compose outputs in the inbound adapter, inject another domain's Service only to use its answer, publish an event when a state change affects another domain | [§6](#6-cross-domain-access) |
+| SVC-38 | | Between deployables a call the caller waits on is an HTTP client call and a state change the caller does not wait for is a `*Message` over the message broker; domains inside one deployable follow SVC-39 | [§6](#6-cross-domain-access) |
+| SVC-39 | | Between domains of one deployable: compose outputs in the inbound adapter, inject another domain's Service only to use its answer, publish an event when a state change affects another domain; asking and telling are decided by the caller's outcome, not the return type | [§6](#6-cross-domain-access) |
 | SVC-40 | | A listener that must commit with the publisher is a synchronous `@EventListener`; one that may run after commit is `AFTER_COMMIT` and writes through `inNewTx` | [§11](#11-spring-events) |
 | SVC-41 | | The publishing domain owns the event class; the affected domain owns a thin listener that delegates to its own Service | [§11](#11-spring-events) |
 
@@ -191,14 +191,16 @@ Example: [SVC-14 · SVC-15](examples/service.md#svc-14--svc-15--exception-declar
 
 A *deployable* is one application that is built, deployed and run on its own (`app-service`, `auth-service`); a *domain* is one `<domain>` package inside a deployable (`user`, `group`, `board`).
 
-**SVC-38** — The boundary decides the means of communication:
+**SVC-38** — The boundary decides the means of communication, and between deployables the caller's wait decides the transport:
 
-| Boundary | State change or command | Read |
+| Boundary | The need | Means |
 |---|---|---|
-| Domain ↔ domain, same deployable | In-process `*Event` (SVC-39) | The other domain's Service (SVC-39) |
-| Deployable ↔ deployable | `*Message` over the message broker ([STY-52](code-style.md#18-transport-dto-suffix)) | HTTP client `*Client` ([CTL-25](controller.md#11-feign-clients)) |
+| Domain ↔ domain, same deployable | A state change that affects the other domain | In-process `*Event` (SVC-39) |
+| Domain ↔ domain, same deployable | The other domain's answer | The other domain's Service (SVC-39) |
+| Deployable ↔ deployable | The caller waits on the outcome — a read, or a command whose result the caller returns or whose failure must reach the caller | HTTP client `*Client` ([CTL-25](controller.md#11-feign-clients)) |
+| Deployable ↔ deployable | The caller tells the other deployable to act and neither its response nor its own commit waits for it | `*Message` over the message broker ([STY-52](code-style.md#18-transport-dto-suffix)) |
 
-Between deployables of the same system, an HTTP client only reads — a guard check or a lookup whose answer the caller needs now (verifying a token, checking an account's status). It never changes the other deployable's state; that travels as a broker message the other deployable consumes. A third-party system outside the organization (a payment gateway, a mail provider) is not a deployable of the system: call its API as it requires, under [TX-2](transactions.md#3-external-calls-and-compensation).
+Between deployables the test in one line: **would the caller's own result be wrong, or have to roll back, if the other side has not finished yet?** Yes → HTTP: a guard check, a lookup, a copy, move or delete whose result the end user receives, an upload that returns ids, an all-or-nothing sync. No → a broker message the other deployable consumes idempotently ([SVC-26](#8-writes-duplicates-and-idempotency)) and redelivers on failure ([SVC-37](#12-message-consumers)): best-effort cleanup, a computation whose result comes back later, a follow-up resource created after the caller's own commit. A state-changing HTTP call whose result the caller discards, or whose failure it swallows, is telling in HTTP clothes — it fails when the other side is down and leaves the two sides inconsistent, so send it as a message. A third-party system outside the organization (a payment gateway, a mail provider) is not a deployable of the system: call its API as it requires, under [TX-2](transactions.md#3-external-calls-and-compensation).
 
 **SVC-39** — Between domains of one deployable, take the first row that fits:
 
@@ -208,7 +210,7 @@ Between deployables of the same system, an HTTP client only reads — a guard ch
 | 2 | A Service's own logic uses another domain's answer — a lookup, a precondition check, a generated id | Inject that domain's Service and call it (never its Repository, SVC-17) |
 | 3 | A state change in one domain (create, update, delete, transition) affects another domain — its data, or a side effect such as a notification, an external call or a cache eviction — and the changing domain does not use the outcome | The changing domain publishes an `*Event`; the affected domain handles it in its own listener ([§11](#11-spring-events)). The publisher never injects the affected domain's Service for this |
 
-The test in one line: **asking** another domain → inject; **telling** it → event; **decorating** an output → adapter. A Service that calls another domain's Service and ignores the return value is telling, not asking (row 3). Following these rows keeps most bean cycles from forming ([SVC-20](#63-breaking-bean-cycles-without-lazy)).
+The test in one line: **asking** another domain → inject; **telling** it → event; **decorating** an output → adapter. The caller's outcome decides which one a call is, not the return type. A call made *after* the Service changed its own state, whose result the Service discards, is telling (row 3). A call made *before* the Service's own writes, whose exception stops the Service — a precondition check, a one-time-use gate — is asking (row 2) even when it returns `Unit`; an event there would move the gate after the writes. An effect the request promised and that must stay out of the transaction, such as deleting stored files after commit, is the direct post-commit call of [TX-3](transactions.md#3-external-calls-and-compensation) option 3, not a row 3 violation. Following these rows keeps most bean cycles from forming ([SVC-20](#63-breaking-bean-cycles-without-lazy)).
 
 ```kotlin
 // ✅ row 2 — creating a group needs the owner's answer: is the user active?
