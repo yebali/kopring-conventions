@@ -16,6 +16,8 @@
 | CTL-8 | | Every Response has `from(result…)` (one Result per composed domain) and every Request has `toCommand(…)`; the controller never maps fields | [§4.4](#44-responsefrom-and-requesttocommand) |
 | CTL-9 | | Every wire property and query/path parameter carries an English OpenAPI `description` | [§4.5](#45-openapi-descriptions) |
 | CTL-10 | | No `@Operation` or `@Tag` | [§4.5](#45-openapi-descriptions) |
+| CTL-30 | | A Response carries only the fields the frontend uses; an unused field is left out, and a new need adds it then | [§4.6](#46-response-fields) |
+| CTL-31 | | A value the frontend can compute from the same Response's other fields is not sent (listed exceptions) | [§4.6](#46-response-fields) |
 | CTL-11 | | Paged responses use `PaginationResponse.from`; other lists use a wrapper Response; never `Page<T>` or a raw list | [§5](#5-response-wrappers-and-json) |
 | CTL-12 | | Responses serialize null fields; no `@JsonInclude(NON_NULL)` | [§5](#5-response-wrappers-and-json) |
 | CTL-13 | | A count response lists every enum value, zero counts included | [§5](#5-response-wrappers-and-json) |
@@ -206,6 +208,19 @@ Imports are explicit ([STY-2](code-style.md#2-baseline)): `io.swagger.v3.oas.ann
 
 ❌ restating the field name (`"id"`) · `@Parameter` on `@RequestBody` or the principal · a new `@Operation`.
 Body DTO, sealed interface and controller parameter examples: [examples](examples/controller.md#ctl-9--openapi-descriptions).
+
+### 4.6 Response fields
+
+**CTL-30** — A Response holds the fields the frontend actually reads, not every field its Result or entity has. A field nobody on the frontend uses is left out; when a screen later needs it, that change adds it. The rule covers every Response, new or existing: an existing field the frontend does not read is removed once the frontend side is confirmed. A smaller Response is not a licence for a screen-shaped endpoint (CTL-20): the choice is which fields an endpoint of a resource returns, not which endpoints exist.
+
+**CTL-31** — A value the frontend can derive from the same Response's other fields is not sent: `totalPrice` from `unitPrice * quantity`, `isExpired` from `expiresAt`, `isDeleted` from `deletedAt`, `itemCount` from the list's length, `hasNext` from the page numbers. The server's entity may expose these as computed properties (REP-34); the Response does not copy them. Exceptions — the value stays in the Response when:
+
+- the server owns the decision: a permission verdict (the frontend must not copy the permission matrix) or a value that depends on server time;
+- the frontend cannot know the rule behind it: a pricing or policy calculation that lives only on the server, or one that rounds;
+- the frontend lacks the value set it ranges over: the zero counts of CTL-13, because the frontend holds no copy of the backend enum.
+
+❌ `OrderItemResponse(unitPrice, quantity, totalPrice, isExpired, expiresAt)` → ✅ `OrderItemResponse(unitPrice, quantity, expiresAt)`
+Before and after: [examples](examples/controller.md#ctl-30--ctl-31--response-fields).
 
 ## 5. Response wrappers and JSON
 

@@ -109,6 +109,35 @@ fun getOrder(
 // ❌ restating the field name ("id"); @Parameter on @RequestBody or the principal; a new @Operation
 ```
 
+## CTL-30 · CTL-31 — Response fields
+
+```kotlin
+// ❌ every Result field copied, derivable values included
+data class OrderItemResponse(
+    val id: UUID,
+    val unitPrice: Long,
+    val quantity: Int,
+    val totalPrice: Long,        // unitPrice * quantity
+    val isExpired: Boolean,      // expiresAt is already here
+    val expiresAt: ZonedDateTime,
+    val internalMemo: String?,   // no screen reads it
+)
+
+// ✅ what the frontend reads; it derives the rest
+data class OrderItemResponse(
+    val id: UUID,
+    val unitPrice: Long,
+    val quantity: Int,
+    val expiresAt: ZonedDateTime,
+)
+
+// ✅ stays: the server owns the decision (CTL-31 exception)
+data class OrderResponse(
+    val id: UUID,
+    val canCancel: Boolean,      // permission and state verdict, not derivable on the client
+)
+```
+
 ## CTL-25 · CTL-26 — Feign client directory layout
 
 Directory structure (identical for single-domain and cross-cutting clients):

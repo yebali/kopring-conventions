@@ -179,6 +179,12 @@ A DTO from a shared module cannot get a `toCommand()` (the shared module cannot 
 
 The client needs to learn every bad id in one round trip. It is not extracted into a generic util because the thrown exception differs per domain (SVC-14); extraction would force call sites to inject an exception type. The rule unifies an **idiom**, not a helper.
 
+### CTL-30 · CTL-31 Response fields
+
+- **Only what the frontend reads** — every field is a contract: it has to be documented, kept in sync and kept compatible. An unread field costs that upkeep for nothing, and adding one later is a one-line change.
+- **No derivable values** — a value sent next to its inputs can disagree with them, and the frontend must choose which to believe. Computing it from the inputs leaves one source of truth.
+- **Exceptions** — a permission verdict, a server-time judgement and a rule the frontend cannot see have a single correct owner, the server; recomputing them on the client duplicates logic that then drifts.
+
 ### CTL-13 Count responses include zero counts
 
 A chart needs every value present, but `GROUP BY` returns only values that occur. `Count*Result.from` walks the service enum and fills the gaps, so the response shape does not depend on the data.
