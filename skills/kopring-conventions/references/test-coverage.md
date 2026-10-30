@@ -14,6 +14,8 @@
 | COV-6 | | No test that re-verifies JPA, Spring, Jackson or Kotlin behavior | [§5](#5-tests-not-to-write) |
 | COV-7 | | The same logic is never tested twice in the same layer | [§6](#6-no-duplicate-verification) |
 | COV-8 | | A new test must pass the three-question regression check (same-layer duplication only) | [§7](#7-regression-signal-check) |
+| COV-9 | | Every Feign client has an adapter test against a stub HTTP server covering its requests and its `ErrorDecoder` | [§4](#4-areas-that-must-have-a-standalone-test) |
+| COV-10 | | Each module with migrations has one guard test that runs Flyway on a fresh database and validates the entity mapping against it | [§4](#4-areas-that-must-have-a-standalone-test) |
 
 How a test is written (support class, `@Nested`, helpers, assertions) is [testing.md](testing.md); this document decides which tests exist. Worked examples: [examples/testing.md](examples/testing.md).
 
@@ -79,6 +81,10 @@ The following areas can fail silently on regression, so each has a standalone te
 | Transactional side-effect ordering (`@TransactionalEventListener(phase = AFTER_COMMIT)`) | Service or integration test | Both cases: (1) committed transaction → effect published, (2) rolled-back transaction → effect not published. A commit-only test stays green even when `phase` is wrong; only the rollback test pins AFTER_COMMIT. Also cover the `REQUIRES_NEW` path (effect survives the outer rollback) when the listener uses one |
 | Handler idempotency (a message-broker listener or `@TransactionalEventListener` on redeliverable messages, [SVC-26](service.md#8-writes-duplicates-and-idempotency)) | Service or integration test | The same message processed twice leaves the state identical to once (no duplicate rows); the dedup key or UNIQUE constraint is enforced |
 | Entity state-change methods (`assign()`, status transitions, `delete()`, `reset*()`) | Service or entity test | Success post-state, each rejection (named exception), and the [STY-34](code-style.md#12-logging) change-log line with the changed fields at their current values, captured through `captureLogs` ([TST-18](testing.md#7-helpers)). For a method STY-34 exempts (progress advance without a status transition) assert that the log is absent. Reach these methods through public calls, never by setting `var`s (COV-6) |
+
+**COV-9** — Service and controller tests replace every Feign client with a `@MockkBean` (TST-3), so a client's own behavior — the request it builds (path, query, headers, body) and its `ErrorDecoder` (CTL-26), which turns a remote status into a domain exception — runs in no test. Each client gets one adapter test against a stub HTTP server (WireMock or the project's equivalent): one case per method asserting the recorded request, and one per status the `ErrorDecoder` maps, asserting the exception. The test builds the client outside the Spring context with the same contract, codec and `ErrorDecoder` (`Feign.builder()…target(OrderClient::class.java, stubUrl)`), as a plain unit test (TST-10), because the shared context holds the client as a mock.
+
+**COV-10** — Tests build their schema from the entities (`ddl-auto: create-drop`), so a migration that does not match the mapping first fails when a deployed service boots, and a constraint that exists only in the migrations (REP-28's partial unique index) exists in no test. Each module with migrations has one guard test that starts its own PostgreSQL container, runs Flyway, and boots the persistence layer with `ddl-auto=validate` against it — the one context TST-33 lets fork. It also asserts the migration-only constraints: a duplicate active value is rejected, a soft-deleted one is not.
 
 ## 5. Tests not to write
 

@@ -59,6 +59,7 @@
 | STY-54 | | A new file, package or module follows the module and package layout table | [§19](#19-module-and-package-layout) |
 | STY-55 | | A new ErrorCode is its prefix's highest number + 1; removed numbers are never reused or closed up | [§20](#20-errorcode-numbering) |
 | STY-57 | | Each service module registers its own code for a shared concept unless `CommonErrorCode` already covers it | [§20](#20-errorcode-numbering) |
+| STY-58 | | Production code reads the current time from an injected `Clock` (`ZonedDateTime.now(clock)`), never the no-argument `now()` | [§11](#11-time-and-durations) |
 
 These rules apply to every layer (controller, service, repository, entity, util) alongside the layer file. Worked `❌`/`✅` pairs live in [examples/code-style.md](examples/code-style.md). §18–§20 are situational — a broker or Spring-event DTO, a new file, package or module, a new ErrorCode; read the matching section before such an edit. When an external skill says otherwise, [§17](#17-external-skill-precedence) settles it.
 
@@ -341,7 +342,7 @@ Both rules are review judgments, not machine-detectable.
 
 ## 11. Time and durations
 
-**STY-29** — Persisted and DTO timestamps are `ZonedDateTime`. `ZonedDateTime.now()` is fine: with `timestamptz` columns the stored instant does not depend on the JVM zone. `Instant` appears only where a framework API takes or returns one (Spring `Trigger`) and in in-memory arithmetic.
+**STY-29** — Persisted and DTO timestamps are `ZonedDateTime`. `ZonedDateTime.now(clock)` (STY-58) is fine: with `timestamptz` columns the stored instant does not depend on the JVM zone. `Instant` appears only where a framework API takes or returns one (Spring `Trigger`) and in in-memory arithmetic.
 
 **STY-30** — A date boundary — today, the current year or month, a code number's date part — uses the application time zone (e.g. `appProperties.timeZone`, bound from `app.time-zone`): `LocalDate.now(appProperties.timeZone)`, `Year.now(appProperties.timeZone)`. Never `ZoneId.systemDefault()`: containers run in UTC and local machines in the developer's zone (e.g. Asia/Seoul), so the same instant falls on different dates.
 
@@ -352,6 +353,8 @@ Both rules are review judgments, not machine-detectable.
 **STY-33** — A duration in code is a `java.time.Duration`: `Duration.ofSeconds(30)`, not `const val X_SECONDS = 30L` multiplied by `1000L` at the use site.
 
 ---
+
+**STY-58** — Production code reads the current time from an injected `java.time.Clock` bean (`ZonedDateTime.now(clock)`, `Instant.now(clock)`), never the no-argument `now()`. The bean is `Clock.system(<application zone>)`. A date boundary in the application time zone (STY-30) — "today", a numbering year, an expiry — is then testable at any instant: the test support replaces the bean with a fixed or offset clock. An entity takes the time as a parameter (`delete(now)`, `isExpiredAt(now)`; REP-34) instead of holding a clock. Auditing timestamps filled by `AuditingEntityListener` use a `DateTimeProvider` backed by the same clock. Test code may call `now()` to build fixtures.
 
 ## 12. Logging
 
@@ -366,7 +369,7 @@ Both rules are review judgments, not machine-detectable.
 | Large collections and binary | Log a summary, not the contents — e.g. a `count`/`cardinality`, never a `List` that can hold tens of thousands of elements or a `ByteArray` |
 | Associations | By id (`memberId=${member.id}`) — interpolating the entity triggers LAZY initialization and N+1. A collection by its count (`itemCount=${items.size}`, only when the method already loaded it) or the id of the element it adds or removes (`itemId=${item.id}`) — never an id list, which initializes a LAZY collection and is unbounded |
 | Mutation in a private helper | List what the helper assigns at the call site (e.g. `Order.clearItems()`); do not move the log into the helper (the action phrase differs per caller) |
-| Constant assignments | Omit fields whose value is a constant for that method — the action phrase already carries it (`Member.delete()` → `deletedAt` only; `Order.reopen()` → `id` only). Exception: the transition's primary field stays even when constant (`Order.hold()` → `status=ON_HOLD`) |
+| Constant assignments | Omit fields whose value is a constant for that method — the action phrase already carries it (`Member.delete(now)` → `deletedAt` only; `Order.reopen()` → `id` only). Exception: the transition's primary field stays even when constant (`Order.hold()` → `status=ON_HOLD`) |
 | No-op guard placement | An early return on the state-change method's first line, not an `if` at the call site — the compared value is the entity's own (`Product.update`). Exception: the service owns the guard when it must also skip event publishing or a return value |
 | Rejection or failure | No duplicate logging in the entity — throw a named exception and `GlobalExceptionHandler` logs it. Guards (`throw`) come before the mutation, so only the success path is logged |
 | Not covered | ① a heartbeat `touch()` ② a progress advance with no status transition (log only when `status` changes) — the row itself holds the progress value |

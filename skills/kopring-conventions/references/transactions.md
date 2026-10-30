@@ -19,12 +19,16 @@
 | TX-11 | | *If the project uses PostgreSQL advisory locks / Redis:* a lock key constant is `"<domain>:<purpose>:lock"` in its class's `companion object` | [§4](#4-lock-selection) |
 | TX-12 | | *If the project uses PostgreSQL advisory locks:* a boot seed that several instances may run takes an advisory lock and filters existing rows before one `saveAll` | [§4](#4-lock-selection) |
 | TX-13 | | *If the project uses PostgreSQL:* documents and diagnoses name the lock mode Hibernate emits (`FOR NO KEY UPDATE`), never `FOR UPDATE` | [§4](#4-lock-selection) |
+| TX-14 | ⚠ | A concurrently edited entity carries `@Version`; a counter or balance changes through one conditional atomic UPDATE | [§4](#4-lock-selection) |
+| TX-15 | ⚠ | Every exception rolls back: `@EnableTransactionManagement(rollbackOn = ALL_EXCEPTIONS)`; `TransactionRunner` rethrows the original exception | [§2](#2-transaction-boundaries) |
 
 Repository implementations carry no `@Transactional` ([REP-4](repository.md#2-query-construction)); test-class transactions follow [TST-8](testing.md#3-test-structure). Service-layer rules live in [service.md](service.md).
 
 ## 2. Transaction boundaries
 
 **TX-1** — `@Transactional` is method-level only: a class-level annotation silently propagates the wrong attribute to every newly added method. `@Transactional(readOnly = true)` on every Service read method, plain `@Transactional` for writes, and **no annotation** for stateless methods (pure JWT parsing) and for a method that interleaves DB work with an external call. In the latter, each DB access runs in a collaborator's own transaction or an `inTx { }` boundary, and the external call stays outside all of them ([§3](#3-external-calls-and-compensation)). A read method carries `readOnly = true` for three reasons: Hibernate sets a read-only session's flush mode to `MANUAL` and keeps no dirty-check snapshots of what it loads, lazy associations can be mapped into the Result inside the boundary, and the read can be routed to a replica if the project has one. TX-6 governs only programmatic boundaries, not this annotation. Example: [TX-1 · TX-5](examples/service.md#tx-1--tx-5--transactional-placement-and-the-boundary-api).
+
+**TX-15** — Spring's default rollback rule is `RuntimeException` or `Error` only, and Kotlin does not mark checked exceptions, so an `IOException` thrown out of a `@Transactional` method commits the writes made before it. The application class declares `@EnableTransactionManagement(rollbackOn = RollbackOn.ALL_EXCEPTIONS)` (Spring 6.2+), so every exception rolls back; no method lists `rollbackFor`. `TransactionTemplate` already rolls back on any exception but wraps a checked one in `UndeclaredThrowableException`, so `TransactionRunner` (TX-5) unwraps it and rethrows the original — a caller's `catch (e: IOException)` still matches.
 
 ## 3. External calls and compensation
 
@@ -60,9 +64,17 @@ class TransactionRunner(private val provider: ObjectProvider<TransactionTemplate
             .apply { propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW }
     }
 
-    fun <T> inTx(block: () -> T): T = template().execute { block() }
+    fun <T> inTx(block: () -> T): T = unwrapping { template().execute { block() } }
 
-    fun <T> inNewTx(block: () -> T): T = requiresNewTemplate.execute { block() }
+    fun <T> inNewTx(block: () -> T): T = unwrapping { requiresNewTemplate.execute { block() } }
+
+    // TransactionTemplate 은 checked 예외를 UndeclaredThrowableException 으로 감싸므로 원래 예외로 되돌린다 (TX-15)
+    private inline fun <T> unwrapping(call: () -> T): T =
+        try {
+            call()
+        } catch (e: UndeclaredThrowableException) {
+            throw e.undeclaredThrowable
+        }
 
     private fun template(): TransactionTemplate =
         checkNotNull(provider.getIfAvailable()) { "No TransactionTemplate available" }
@@ -123,3 +135,5 @@ Examples (forbidden boundary hand-rolls, split + compensate skeleton): [TX-1 · 
 **TX-13** — Hibernate's `PostgreSQLDialect` emits `FOR NO KEY UPDATE` for `PESSIMISTIC_WRITE`. Documents, comments and performance diagnoses name that mode, never `FOR UPDATE`, which is a different lock with different conflicts.
 
 Examples: [TX-8 · TX-9](examples/service.md#tx-8--tx-9--lock-selection-advisory-vs-redis), [TX-10](examples/service.md#tx-10--lock-key-helper).
+
+**TX-14** — A read-modify-write through dirty checking loses an update when two requests edit the same row: both read the same state, and the second commit overwrites the first. An entity two requests can edit concurrently (an order a member and an operator both change, a shared settings row) carries `@Version var version: Long = 0` with a `protected set` (column `version bigint not null default 0`); the second commit then fails with `ObjectOptimisticLockingFailureException`, which the global exception handler maps to a 409 so the client re-reads and retries. A counter or balance (stock, a quota, a sequence) never goes through read-modify-write: it changes through one conditional atomic UPDATE (`set stock = stock - :n where id = :id and stock >= :n`, a QueryDSL `update` in the `Custom*RepositoryImpl`) whose affected-row count decides success. A pessimistic lock (`PESSIMISTIC_WRITE`, TX-13) is for a short critical section that reads and writes several rows as one step, and is never held across an external call (TX-2).

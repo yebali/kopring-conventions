@@ -40,6 +40,10 @@
 | REP-31 | | *If the project uses Spring Data Redis repositories:* a field used in a derived query is `@Indexed`; a TTL extension uses `EXPIRE`, never a re-`save` | [§10](#10-redis-repositories) |
 | REP-32 | | A Flyway migration is immutable once merged to the shared branch; one feature's schema change is one migration | [§11](#11-migrations) |
 | REP-33 | | A new unique constraint is named `uq_<table>_<columns>` | [§11](#11-migrations) |
+| REP-35 | | An entity is a plain `class`, never a `data class`, and does not override `equals`/`hashCode`; `plugin.jpa` and all-open are configured | [§6](#6-entity-mapping) |
+| REP-36 | | Every foreign-key column has an index; indexes are `idx_<table>_<columns>`, foreign keys `fk_<table>_<column>` | [§11](#11-migrations) |
+| REP-37 | | A migration on a large table never blocks writes: `CREATE INDEX CONCURRENTLY` in its own file, constraints `NOT VALID` then `VALIDATE`, `NOT NULL` after a backfill | [§11](#11-migrations) |
+| REP-38 | | A paged read sorts only by the properties its Query object allows; any other `sort` is a 400 | [§4](#4-filters-and-ordering) |
 
 Rules other files own apply to repository and entity code as well: imports [STY-2](code-style.md#2-baseline), comments [STY-16 and STY-17](code-style.md#5-comments-and-kdoc), entity change logging [STY-34](code-style.md#12-logging), CRUD method order [SVC-21](service.md#7-method-order), collection persistence [SVC-23](service.md#8-writes-duplicates-and-idempotency), and cross-domain repository access [SVC-17](service.md#6-cross-domain-access).
 
@@ -155,6 +159,8 @@ Never `takeIf { it.isNotEmpty() }` to mean "all": it turns an empty selection in
 .withPagination(query.pageable, *orderTransformer.transform(query.pageable.sort), order.id.asc())   // paged form
 ```
 
+**REP-38** — The `Sort` of a paged read comes from the client's `?sort=`, and the shared `Sort` → `OrderSpecifier` transformer (REP-23) resolves any mapped path: an association path (an implicit join), an unindexed column of a large table, a field the client may not see, a JSONB key. Each `Page*Query` declares the properties it sorts by (`companion object { val SORTABLE = setOf("createdAt", "status") }`), the transformer receives that set, and a property outside it raises the domain's 400. REP-12's id tie-breaker is appended after the allowed properties.
+
 ## 5. Native SQL
 
 **REP-13** — Native SQL binds every value with `setParameter`; only fixed fragments chosen in code may be concatenated into the SQL string. Rows are read through `createNativeQuery(sql, Tuple::class.java)` and column aliases, never through positional `Array<*>` casts.
@@ -210,13 +216,15 @@ Example: [REP-14](examples/repository.md#rep-14--entity-column-policy).
 
 Example: [REP-21 · REP-34](examples/repository.md#rep-21--rep-34--entity-layer-and-computed-property).
 
+**REP-35** — An entity is a plain `class`, never a `data class`: a generated `equals`/`hashCode`/`toString` reads every property, so it initializes LAZY associations, recurses through bidirectional ones, and changes its hash when a field changes, which loses the entity inside a `HashSet`. An entity does not override `equals`/`hashCode` either: within one persistence context Hibernate keeps one instance per row, so identity equality holds, and code comparing entities across contexts compares ids. The build applies `kotlin("plugin.jpa")` (no-arg constructors) and all-open for `@Entity`, `@MappedSuperclass` and `@Embeddable`; without all-open a final Kotlin class cannot be proxied, and every LAZY to-one loads eagerly.
+
 ## 7. JSONB
 
 *If the project uses PostgreSQL JSONB.*
 
 **REP-22** — A JSONB column carries both `@JdbcTypeCode(SqlTypes.JSON)` and `@Column(columnDefinition = "jsonb")`. `@JdbcTypeCode` drives the JSON serialization, and with the PostgreSQL dialect it alone maps to `jsonb`; `columnDefinition = "jsonb"` makes the column type explicit for schema generation and validation and for readers.
 
-**REP-23** — JSONB queries go through one shared JSONB query util: a `.jsonbField(vararg keys)` extension extracts the value as text, then `.containsIgnoreCase()`, `.eq(...)`. There is no numeric cast — a JSONB value compares and sorts as text. Sorting passes the `Sort` to the shared `Sort` → `OrderSpecifier` transformer (`OrderSpecifierTransformer(entityPath).transform(sort)`); a property whose first segment is a JSONB map field (`metadata.priority`) orders by that key's text value, so numbers sort lexicographically (`"10"` before `"9"`). There is no per-field cast or field allow-list.
+**REP-23** — JSONB queries go through one shared JSONB query util: a `.jsonbField(vararg keys)` extension extracts the value as text, then `.containsIgnoreCase()`, `.eq(...)`. There is no numeric cast — a JSONB value compares and sorts as text. Sorting passes the `Sort` to the shared `Sort` → `OrderSpecifier` transformer (`OrderSpecifierTransformer(entityPath).transform(sort)`); a property whose first segment is a JSONB map field (`metadata.priority`) orders by that key's text value, so numbers sort lexicographically (`"10"` before `"9"`). There is no per-field cast; the sortable properties are limited by REP-38.
 
 **REP-24** — An insert-only entity carrying a JSONB value with a nested collection (`snapshot = {"items": [{"sku": "A-1", "quantity": 2}]}`) is `@org.hibernate.annotations.Immutable`. Hibernate's JSON type does not deep-copy the snapshot, so such a value is judged dirty on every flush and each inserted row gets a redundant UPDATE; flat maps do not reproduce it.
 
@@ -232,7 +240,7 @@ Example: [REP-22 · REP-23 · REP-24](examples/repository.md#rep-22--rep-23--rep
 
 ## 8. Soft delete
 
-**REP-27** — An entity that keeps a deletion trail has a nullable `deletedAt` instead of a physical delete, in three fixed pieces: the `deletedAt` column (`protected set`), an `isDeleted` getter, and a `delete()` transition method that logs only the field it assigns ([STY-34](code-style.md#12-logging)). Filtering is always stated explicitly — never `@SQLRestriction`, `@SQLDelete` or `@Where`. QueryDSL reads keep `deletedAt.isNull` in the predicate: single and list reads `and` it in the where clause; paged reads seed the `by()` builder with it. A derived query (`findAllByOrder`) or an own-PK read (`findById`) carries no such condition — REP-2 row 1 allows no `And`, and REP-9 keeps own-PK reads derived — so it may return deleted rows, and the Service filters them through its `getActiveEntity` ([SVC-18](service.md#6-cross-domain-access)) or an `isDeleted` check.
+**REP-27** — An entity that keeps a deletion trail has a nullable `deletedAt` instead of a physical delete, in three fixed pieces: the `deletedAt` column (`protected set`), an `isDeleted` getter, and a `delete(now)` transition method that logs only the field it assigns ([STY-34](code-style.md#12-logging)). Filtering is always stated explicitly — never `@SQLRestriction`, `@SQLDelete` or `@Where`. QueryDSL reads keep `deletedAt.isNull` in the predicate: single and list reads `and` it in the where clause; paged reads seed the `by()` builder with it. A derived query (`findAllByOrder`) or an own-PK read (`findById`) carries no such condition — REP-2 row 1 allows no `And`, and REP-9 keeps own-PK reads derived — so it may return deleted rows, and the Service filters them through its `getActiveEntity` ([SVC-18](service.md#6-cross-domain-access)) or an `isDeleted` check.
 
 **REP-28** — A unique column on a soft-delete entity has a partial unique index (`WHERE deleted_at IS NULL`); a plain UNIQUE lets a deleted row occupy the value forever and blocks re-registration with the same code.
 
@@ -267,3 +275,7 @@ Rolling a `@RedisHash` entity's TTL forward uses `EXPIRE`, never `save`: `save` 
 **REP-32** — A `db/migration/V*.sql` may be edited or renumbered until it is merged to the shared branch; after that it is immutable, in content and filename — teammates' local databases and CI may already have applied it, and an edit alters its Flyway checksum (a rename leaves the applied version unresolved), so Flyway's validate-on-migrate fails at boot (`FlywayValidateException`). Schema evolves through a new versioned migration — a rename too is a new `V*` with `ALTER TABLE … RENAME`. One feature's schema change is one migration file: it is not split into `V5`/`V6` per sub-task, and while it is unmerged each sub-task's change folds into the feature's file.
 
 **REP-33** — A new unique constraint is named `uq_<table>_<columns>` (`uq_order_item_order_id_product_id`). Constraints in merged migrations keep their names (REP-32).
+
+**REP-36** — PostgreSQL does not index a foreign-key column by itself. Every foreign key (REP-15 makes every reference one) gets an index in the migration that adds it, unless a composite index or unique constraint already leads with that column; without it a parent delete (`ON DELETE CASCADE`, REP-29) and every child lookup by parent scan the child table. Names: `idx_<table>_<columns>` for an index and `fk_<table>_<column>` for a foreign key (`idx_order_item_order_id`, `fk_order_item_order_id`), beside REP-33's `uq_`. Names in merged migrations stay (REP-32).
+
+**REP-37** — On a table large enough that a scan or rewrite takes noticeable time, a migration never holds a write-blocking lock for that long. `CREATE INDEX` blocks writes for its whole build, so an index is built `CONCURRENTLY`, which cannot run inside a transaction: it goes in a migration file of its own — Flyway runs a script holding only non-transactional statements outside a transaction and rejects one that mixes both — the one exception to REP-32's one file per feature. A foreign key or check constraint is added `NOT VALID` and checked by a later `VALIDATE CONSTRAINT`, which takes a weaker lock. A `NOT NULL` column on existing rows is added nullable (or with a constant `DEFAULT`, which PostgreSQL 11+ adds without a rewrite), backfilled, then set `NOT NULL`. Such a migration starts with `SET lock_timeout`, so a blocked migration fails instead of queueing every write behind it.

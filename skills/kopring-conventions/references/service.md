@@ -45,6 +45,7 @@
 | SVC-39 | | Between domains of one deployable: compose outputs in the inbound adapter, inject another domain's Service only to use its answer, publish an event when a state change affects another domain; asking and telling are decided by the caller's outcome, not the return type | [§6](#6-cross-domain-access) |
 | SVC-40 | | A listener that must commit with the publisher is a synchronous `@EventListener`; one that may run after commit is `AFTER_COMMIT` and writes through `inNewTx` | [§11](#11-spring-events) |
 | SVC-41 | | The publishing domain owns the event class; the affected domain owns a thin listener that delegates to its own Service | [§11](#11-spring-events) |
+| SVC-42 | ⚠ | A message whose loss leaves another deployable inconsistent goes through a transactional outbox or a named reconciliation job; any other publish is marked best-effort | [§11](#11-spring-events) |
 
 Service code also follows the cross-cutting rules: logging ([STY-1](code-style.md#2-baseline), [logging](code-style.md#12-logging)), single-use intermediates ([STY-19](code-style.md#6-single-use-intermediates)) and the plain option ([STY-27](code-style.md#10-prefer-the-plain-option)). Transaction boundaries, external calls and locks are TX rules in [transactions.md](transactions.md).
 
@@ -422,6 +423,8 @@ data class GroupDeletedEvent(val group: Group)
 **SVC-35** — A listener method is named `on{EventName}` (`onOrderCanceled` for `OrderCanceledEvent`), and the field holding the publisher is `applicationEventPublisher`.
 
 ---
+
+**SVC-42** — A broker publish from an `AFTER_COMMIT` listener (SVC-40) is lost for good when the process dies or the broker is unavailable between the commit and the send; consumer redelivery (SVC-37) cannot help a message that was never sent. A message whose loss leaves another deployable inconsistent — a state change it must apply (SVC-38) — is written in the same transaction as the change into an outbox table and sent by a relay that retries until the broker acknowledges, or the publisher names the reconciliation job that re-derives and resends it. Any other publish (a notification, a cache hint) is best-effort, and the publishing method's KDoc says so.
 
 ## 12. Message consumers
 

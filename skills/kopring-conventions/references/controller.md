@@ -37,6 +37,7 @@
 | CTL-27 | | An SSE endpoint declares its `@ApiResponse` schema (`oneOf` for variants) | [§12](#12-sse-endpoints) |
 | CTL-28 | | A controller method converts, delegates to the Service (to each domain's Service when composing) and converts back; it never branches on a result (listed exceptions) | [§13](#13-thin-controller) |
 | CTL-29 | | A wire DTO from a shared module maps through `Command.from(wireDto)` and back through `Result.toResponse()` | [§14](#14-shared-module-wire-dto-mapping) |
+| CTL-33 | | A field, enum value or endpoint is removed or renamed directly, without a deprecation phase, and its consumers are told or changed in the same change | [§8](#8-restful-api-design) |
 
 Shared rules apply to controllers too: imports and section banners ([STY-2, STY-6](code-style.md#2-baseline)), comments ([STY-17](code-style.md#5-comments-and-kdoc)), the plain option ([STY-27](code-style.md#10-prefer-the-plain-option)), and DTO names ([STY-50](code-style.md#16-filler-suffixes-and-dto-casing)).
 
@@ -356,6 +357,8 @@ A new type adds an enum value, not an endpoint. A sub-resource read that only re
 - **POST reads** — `search`, `state-counts` and batch reads take a body (CTL-21).
 - **Internal snapshot reads for non-user callers** — a fixed, parameterless `GET /api/v1/internal/.../latest` polled by a machine caller may sit beside the admin `POST …/search`: the machine caller needs a snapshot, not the admin search body.
 - **Existence checks** — `GET /api/v1/members/exists?email=` answers whether an address is registered; it counts soft-deleted accounts, so it cannot be a filter of the member list (CTL-21).
+
+**CTL-33** — The API evolves without a deprecation phase, on the same principle as CTL-32. Adding a field or an endpoint is compatible and needs nothing. Removing or renaming a field, an enum value or an endpoint is done directly, and the change names its consumers: the frontend developers are told what went and what replaces it; a client in another deployable of the same system (a Feign client, CTL-25) is changed in the same change and deployed first, so no reader expects a field the provider has stopped sending. A new enum value is announced to the frontend too — a client that switches exhaustively over the generated type breaks on it. `/api/v2` is for a resource whose shape or meaning changes as a whole, which a field-level change cannot express; its v1 endpoint is then removed the same way.
 
 ## 9. Paging
 

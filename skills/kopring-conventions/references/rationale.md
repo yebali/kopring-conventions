@@ -101,6 +101,10 @@ Executors from `Executors.new*` inside a bean are invisible to Spring's shutdown
 
 Mixing `java.io.File` and NIO `Path` means converting back and forth and ignoring the `Boolean` results of `File.delete()`/`mkdirs()`; NIO throws instead. A Result carrying an open `InputStream` leaks the descriptor whenever an exception lands between opening and the controller wrapping it, because nobody owns the close; returning a `Path` or a writer keeps opening and closing in one place.
 
+### STY-58 · CFG-20 The clock and the zone
+
+A no-argument `now()` makes every date boundary depend on the moment the test runs, so a "today" or year-end rule is tested only on the day it happens to matter. An injected `Clock` lets a test stand on any instant. Pinning the JVM, Hibernate and Jackson zones keeps the offset a client sees from depending on which host served it.
+
 ## 2. Naming
 
 ### STY-50 No filler suffixes
@@ -208,6 +212,10 @@ A client that omits `size` should not need to know which endpoint it is calling 
 
 When some clients take timeouts from properties and others hard-code them, whether a timeout can be tuned without a release depends on the client. When failures are translated several ways (per-client `ErrorDecoder`, call-site wrappers, raw `FeignException` to the global handler), the same downstream 404 surfaces as different errors. One decoder per client maps downstream statuses once, next to the client that knows them.
 
+### CTL-33 No deprecation phase
+
+The frontend and the backend ship as one team, and the other clients are deployables of the same system, so every consumer is known and can change in step. A deprecation phase would keep dead fields alive for consumers that do not exist; telling the frontend and changing the internal clients in the same change replaces it.
+
 ## 5. Service and transactions
 
 ### STY-27 Prefer the plain option
@@ -262,6 +270,18 @@ The persistence context is still open while an `AFTER_COMMIT` listener runs inli
 
 **Why bulk DML for an unbounded change** — a job that changes ten thousand rows through entity methods would print ten thousand INFO lines and bury every other operation (STY-35). The entity cannot lower its own level, because it does not know which path called it; a bulk DML bypasses the entity method, and one INFO summary keeps the result visible.
 
+### TX-14 Lost updates
+
+Dirty checking writes back whatever the transaction read, so two concurrent edits silently keep the later one. `@Version` turns the loss into a visible 409, and an atomic UPDATE removes the read from the counter path entirely; neither holds a lock across the request.
+
+### TX-15 Checked exceptions roll back
+
+Kotlin callers never see a checked exception in a signature, so nobody writes `rollbackFor` where Java would have prompted it, and a partial write commits silently. One global switch removes the trap; unwrapping keeps the two boundary APIs throwing the same exception.
+
+### SVC-42 Messages that must not be lost
+
+A commit and a broker send are two systems; no ordering of the two calls makes them atomic. The outbox makes the message part of the commit and retries the send; a reconciliation job accepts the loss and repairs it later. Naming best-effort publishes keeps the distinction visible in review.
+
 ## 6. Enum
 
 ### SVC-27 Enum layer separation
@@ -312,6 +332,18 @@ When a nested collection goes into a `@JdbcTypeCode(SqlTypes.JSON)` field, Hiber
 
 Some paths deliberately read deleted rows (tombstone lookups for audit and history screens), and a global filter silently breaks them, so the cost is an explicit predicate in each QueryDSL read, and an `isDeleted` check in the Service after a derived or own-PK read.
 
+### REP-35 Plain entity classes
+
+A Kotlin `data class` derives equality and hashing from every property, which for an entity means lazy loading, recursion through bidirectional relations and a hash that moves when a field changes. Hibernate already guarantees one instance per row inside a persistence context, so default identity is the correct equality there.
+
+### REP-36 · REP-37 Indexes and online migrations
+
+PostgreSQL leaves foreign keys unindexed, so a cascade delete or a lookup by parent scans the child table once the table grows. Index builds and constraint checks lock out writes on large tables; `CONCURRENTLY`, `NOT VALID` and `lock_timeout` keep a deployment from stalling production traffic behind a migration.
+
+### REP-38 Sortable properties
+
+`?sort=` is client input that becomes SQL. Without an allow-list it reaches unindexed columns, implicit joins and fields the client may not see, and an expensive sort is a cheap way to load the database.
+
 ### REP-31 Redis TTL extension uses EXPIRE
 
 Spring Data Redis `save` deletes and rewrites the key and refreshes `@Indexed` secondary indexes, and that path issues a Redis `KEYS` command per index. Redis is single-threaded, so a re-save on a hot request path stalls every other client. Spring Data Redis also populates only constructor properties on read, so the REP-17 `protected set` shape cannot apply to a `@RedisHash` entity.
@@ -329,3 +361,7 @@ When an exception type maps to one ErrorCode, the type already pins the behavior
 ### TST-33 One shared test context
 
 Spring's test context cache keys on a class's full configuration, so any per-class variation starts another context with its own Testcontainers set and mock singletons in the same JVM, adding startup time and container load for each fork. A forked context's mocks are also not the support's shared ones, so the shared-mock guarantees of TST-3 and TST-26 quietly stop holding for that class.
+
+### TST-34 · COV-9 · COV-10 What the shared context hides
+
+A scheduler firing mid-test changes rows and mock state at random moments, which turns into flaky failures nobody can reproduce. Mocking every Feign client keeps service tests fast but leaves the client's own mapping and error translation untested, so each client gets one test at its real HTTP boundary. Entity-generated test schemas never run the migrations, so one guard per module proves the migrations and the mapping agree before a deployment does.

@@ -16,6 +16,7 @@
 | CFG-17 | | A list property is `List<String>`, never a comma-separated string | [§3](#3-properties-classes) |
 | CFG-18 | | A duration property is `Duration` with `@DurationUnit`, keeping its name and env key | [§3](#3-properties-classes) |
 | CFG-19 | | A value operators tune per environment is a property; anything else is a code constant | [§3](#3-properties-classes) |
+| CFG-20 | | The JVM, Hibernate and Jackson time zones are pinned to the application time zone | [§2](#2-environment-values) |
 
 Durations in code follow [STY-33](code-style.md#11-time-and-durations).
 
@@ -36,6 +37,8 @@ data class AppProperties(val apiKey: String) {
 **CFG-7** — A property referenced from Kotlin is declared in the yml. `@FeignClient(url = "\${...}")` and `@Scheduled(fixedDelayString = "\${...}")` are no exception.
 
 ✅ `stream-replicas: ${STREAM_REPLICAS:1}` in the yml, read by a properties class — ❌ a `\${app.foo:1}` that exists only in Kotlin and has no yml declaration.
+
+**CFG-20** — A `ZonedDateTime` read from a `timestamptz` column carries the zone of `hibernate.jdbc.time_zone`, which defaults to the JVM's, so the offset a client sees depends on the host — `+00:00` in a container, `+09:00` on a laptop — and a value just created can differ in offset from its re-read copy. The deployment sets `TZ` (or `-Duser.timezone`) to the application time zone, and `application.yml` sets `spring.jpa.properties.hibernate.jdbc.time_zone` and `spring.jackson.time-zone` to the same zone. Date boundaries still come from the application zone in code (STY-30), not from the host.
 
 ## 3. Properties classes
 

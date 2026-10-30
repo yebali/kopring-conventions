@@ -4,6 +4,22 @@ Rule identifiers added, changed, removed or renumbered, newest first. A consumin
 
 ## 2026-10-30
 
+New rules:
+
+- **Added** `TX-14`: a concurrently edited entity carries `@Version`; counters change through an atomic UPDATE.
+- **Added** `TX-15`: every exception rolls back (`RollbackOn.ALL_EXCEPTIONS`); `TransactionRunner` rethrows the original exception.
+- **Added** `SVC-42`: a message whose loss breaks another deployable goes through an outbox or a named reconciliation job.
+- **Added** `REP-35`: entities are plain classes without `equals`/`hashCode`; `plugin.jpa` and all-open.
+- **Added** `REP-36`: foreign keys are indexed; `idx_` and `fk_` names.
+- **Added** `REP-37`: online migrations on large tables.
+- **Added** `REP-38`: a paged read sorts only by allowed properties. `REP-23` points to it.
+- **Added** `CTL-33`: fields, enum values and endpoints are removed or renamed directly; consumers are told or changed in the same change.
+- **Added** `STY-58`: the current time comes from an injected `Clock`. `STY-29`, `REP-27` (`delete(now)`) follow.
+- **Added** `CFG-20`: JVM, Hibernate and Jackson time zones are pinned.
+- **Added** `TST-34`: the test profile switches off schedulers and self-starting workers.
+- **Added** `COV-9`: each Feign client has an adapter test against a stub HTTP server.
+- **Added** `COV-10`: each module has a migration guard test; `TST-33` allows it its own context.
+
 Tooling:
 
 - `blank-line-before-return.sh` (STY-10) moved to `kopring-conventions/scripts/` and takes a file list; `--fix` touches only the files given.

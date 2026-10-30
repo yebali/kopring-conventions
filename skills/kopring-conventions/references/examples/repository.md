@@ -265,8 +265,8 @@ var deletedAt: ZonedDateTime? = null
 val isDeleted: Boolean
     get() = deletedAt != null
 
-fun delete() {
-    deletedAt = ZonedDateTime.now()
+fun delete(now: ZonedDateTime) {                     // the caller passes ZonedDateTime.now(clock) (STY-58)
+    deletedAt = now
     logger.info { "Order deleted: id=$id, deletedAt=$deletedAt" }   // STY-34 — assigned field only
 }
 ```
