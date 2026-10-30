@@ -4,6 +4,12 @@ Rule identifiers added, changed, removed or renumbered, newest first. A consumin
 
 ## 2026-10-30
 
+Adopting these changes in an existing project — run `check-conventions all`, whose Check F covers the setup items; the lint covers the line items:
+
+- **Setup:** `@EnableTransactionManagement(rollbackOn = RollbackOn.ALL_EXCEPTIONS)` and the `TransactionRunner` unwrap (TX-15); a `Clock` bean (STY-58); `TZ`, `hibernate.jdbc.time_zone` and `spring.jackson.time-zone` (CFG-20); the scheduling switch off in the test profile (TST-34); `plugin.jpa` and all-open (REP-35); one Feign adapter test per client (COV-9); one migration guard test per module (COV-10); the authorization interceptor on in the shared test support (COV-2); `sort` dropped from the project's `PaginationResponse` (CTL-11).
+- **Line items the lint reports:** STY-45 retry predicate defaults, STY-58 no-argument `now()`, SVC-24 `.constraintName`, SVC-34 listener flags, REP-14 `@Column(unique = true)`, REP-15 `@ManyToOne` without `LAZY`, REP-30 `deleteAllBy*`, TST-7 `restoreSharedDoubles`, TST-33 per-class context changes.
+- **The project's rule document:** an override that restates a rule corrected here (for example REP-29 "owning relationships", REP-33 "applied migrations", SVC-24, STY-45 `withRetry`, COV-2 `@TestPropertySource`) keeps the old text in force until it is updated. Add the lint exceptions it grants to `.convention-lint-ignore`.
+
 New rules:
 
 - **Added** `TX-14`: a concurrently edited entity carries `@Version`; counters change through an atomic UPDATE.

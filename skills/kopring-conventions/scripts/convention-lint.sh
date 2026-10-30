@@ -26,11 +26,16 @@
 #       A rationale written without one of these words stays agent-judged.
 #   STY-30 ZoneId.systemDefault() (main).
 #   STY-43 Executors.new* (main).
+#   STY-45 a retry predicate defaulting to `{ true }` (main).
+#   STY-58 no-argument `ZonedDateTime/OffsetDateTime/LocalDateTime/LocalDate/Instant.now()` (main).
 #   SVC-13 Hangul inside a thrown message — `throw X(…)`, `require`, `check`, `requireNotNull`,
 #       `checkNotNull`, `error(` not called on a receiver (main). Blind spot: a message built on a later line.
 #   SVC-15 direct throw of a generic/base exception (main, `*Service.kt` and `service/command/` only).
 #       Blind spot: generics thrown from a lambda (`orElseThrow { NoSuchElementException(…) }`).
 #   SVC-20 @Lazy (main).
+#   SVC-24 `.constraintName` — Hibernate's message-parsed constraint name (main).
+#   SVC-34 `fallbackExecution = true` on an AFTER_ROLLBACK/AFTER_COMPLETION listener, or an AFTER_COMMIT/
+#       BEFORE_COMMIT listener without it (main). Blind spot: an annotation whose arguments span lines.
 #   TX-1   class-level @Transactional — column-0 heuristic (main only; test classes may carry it).
 #   CTL-3  `required = false` (main).
 #   CTL-10 @Operation( / @Tag( (main).
@@ -42,11 +47,17 @@
 #   REP-3  stereotype on Custom*RepositoryImpl (main).
 #   REP-4  @Transactional on Custom*RepositoryImpl (main).
 #   REP-10 PageImpl( (main).
+#   REP-14 @Column(… unique = true …) (main).
+#   REP-15 @ManyToOne without FetchType.LAZY (main). Blind spot: an annotation whose arguments span lines.
 #   REP-27 @SQLRestriction / @SQLDelete / @Where( (main).
+#   REP-30 a bulk delete named `deleteAllBy*` in Custom*RepositoryImpl (main).
 #   TST-6  @DisplayName (test).
+#   TST-7  restoreSharedDoubles (test).
 #   TST-21 stdlib `assert(` and JUnit/kotlin.test assertEquals/assertTrue/assertFalse/assertNull/
 #       assertNotNull/assertThrows (test).
 #   TST-27 `relaxed = true` (test).
+#   TST-33 @DirtiesContext / @TestPropertySource / @ActiveProfiles / @WebMvcTest / @DataJpaTest outside
+#       *TestSupport.kt (test). The migration guard test of COV-10 goes in `.convention-lint-ignore`.
 #
 # Stays agent-judged (deliberately not here): STY-9 lambda layout, Thread.sleep in tests (TST-29
 # tolerates createdAt spacing), everything else in the Hard Rules tables. STY-10 has its own script,
@@ -101,6 +112,17 @@ g "$MAIN" 'ZoneId\.systemDefault\(\)'     | fmt '[STY-30] ZoneId.systemDefault()
 g "$MAIN" 'Executors\.new'                | fmt '[STY-43] Executors.new* inside a bean forbidden — use a Spring-managed executor'
 g "$MAIN" 'PageImpl\('                    | fmt '[REP-10] PageImpl forbidden — PageableExecutionUtils.getPage / Page.empty'
 g "$MAIN" "@SQLRestriction|@SQLDelete|@Where\(" | fmt '[REP-27] global soft-delete filter forbidden — state deletedAt.isNull in the query'
+g "$MAIN" '[Rr]etryable[^=]*=[[:space:]]*\{[[:space:]]*true[[:space:]]*\}' | fmt '[STY-45] retry predicate defaults to true — the caller must state what is safe to retry'
+g "$MAIN" '(ZonedDateTime|OffsetDateTime|LocalDateTime|LocalDate|Instant)\.now\(\)' | fmt '[STY-58] no-argument now() — read the time from the injected Clock'
+g "$MAIN" '\.constraintName' | fmt '[SVC-24] constraint name parsed from the message — read PSQLException.serverErrorMessage.constraint'
+LISTENER='@TransactionalEventListener([[:space:]]|$|\([^)]*\))'
+g "$MAIN" "$LISTENER" | grep -E 'AFTER_ROLLBACK|AFTER_COMPLETION' | grep -E 'fallbackExecution[[:space:]]*=[[:space:]]*true' |
+    fmt '[SVC-34] fallbackExecution on a rollback/completion listener — it would run although nothing rolled back'
+g "$MAIN" "$LISTENER" | grep -vE 'AFTER_ROLLBACK|AFTER_COMPLETION|fallbackExecution' |
+    fmt '[SVC-34] AFTER_COMMIT/BEFORE_COMMIT listener without fallbackExecution = true'
+g "$MAIN" '@Column\([^)]*unique[[:space:]]*=[[:space:]]*true' | fmt '[REP-14] @Column(unique = true) — declare a named @Table(uniqueConstraints), none on a soft-delete column'
+g "$MAIN" '@ManyToOne([[:space:]]|$|\([^)]*\))' | grep -v 'FetchType\.LAZY' | fmt '[REP-15] @ManyToOne without fetch = FetchType.LAZY — the JPA default is EAGER'
+g "$REPO_IMPL" 'fun deleteAllBy'          | fmt '[REP-30] bulk delete named deleteAllBy* — name it bulkDeleteBy*'
 
 BASE_PACKAGE=${BASE_PACKAGE:-}
 if [ -z "$BASE_PACKAGE" ]; then
@@ -135,6 +157,9 @@ g "$TEST" '@DisplayName'                  | fmt '[TST-6] @DisplayName forbidden 
 g "$TEST" '(^|[^.A-Za-z])(assert|assertEquals|assertTrue|assertFalse|assertNull|assertNotNull|assertThrows)\(' |
     fmt '[TST-21] non-AssertJ assertion forbidden — AssertJ assertThat shows actual vs expected'
 g "$TEST" 'relaxed[[:space:]]*=[[:space:]]*true' | fmt '[TST-27] relaxed mock forbidden — strict mocks, relaxUnitFun = true only'
+g "$TEST" 'restoreSharedDoubles'          | fmt '[TST-7] restoreSharedDoubles is obsolete — springmockk clears shared mocks after each test'
+g "$TEST" "@(DirtiesContext|TestPropertySource|ActiveProfiles|WebMvcTest|DataJpaTest)$ANNOT_END" | grep -v 'TestSupport\.kt:' |
+    fmt '[TST-33] forks the shared Spring context — configure it once in the test support'
 
 IGNORE="$ROOT/.convention-lint-ignore"
 if [ -s "$OUT" ] && [ -f "$IGNORE" ]; then
