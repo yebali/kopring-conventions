@@ -26,7 +26,7 @@
 | CTL-16 | | Controllers in `controller/`, Request/Response in `controller/rest/`, no subfolders | [§7](#7-file-layout) |
 | CTL-17 | | URLs name plural resources, `/{id}` for one item, nesting at most two levels (listed exceptions) | [§8](#8-restful-api-design) |
 | CTL-18 | | `@ResponseStatus` only `CREATED` for a creating POST and `NO_CONTENT` for a body-less PUT/DELETE | [§8](#8-restful-api-design) |
-| CTL-19 | | No PATCH; a DELETE takes no body | [§8](#8-restful-api-design) |
+| CTL-19 | | No PATCH; a PUT replaces the whole resource, so a `null` field clears it; a DELETE takes no body | [§8](#8-restful-api-design) |
 | CTL-20 | | No screen- or widget-shaped endpoint; a system-administrator-only endpoint is under `/api/v1/admin` | [§8](#8-restful-api-design) |
 | CTL-21 | | One read endpoint per resource: type and lookup key are filters or response fields; `/search` only for POST reads with a body | [§8](#8-restful-api-design) |
 | CTL-22 | | An endpoint carries only resources its own deployable owns | [§8](#8-restful-api-design) |
@@ -73,7 +73,7 @@ fun createOrder(@RequestBody req: CreateOrderRequest, authUser: AuthUser) =
 
 **CTL-2** — Every endpoint is prefixed `/api/v1/...`.
 
-**CTL-3** — `required = false` is forbidden on `@RequestParam`, `@RequestHeader` and `@RequestBody`. An optional parameter is nullable (`String?`). A `@RequestBody` is always required and has no parameter default object (`= XxxRequest()`); an empty `{}` is allowed through the DTO's field defaults.
+**CTL-3** — `required = false` is forbidden on `@RequestParam`, `@RequestHeader` and `@RequestBody`. An optional parameter is nullable (`String?`); that reading does not carry over to a `PUT` body, where a `null` or omitted field clears the value ([CTL-19](#8-restful-api-design)). A `@RequestBody` is always required and has no parameter default object (`= XxxRequest()`); an empty `{}` is allowed through the DTO's field defaults.
 
 ```kotlin
 // ✅ optional @RequestParam → nullable; @RequestBody → no param default (DTO field defaults handle empty {})
@@ -332,7 +332,7 @@ A non-CRUD action (state transition, command) is an action endpoint under its re
 | `PUT` / `DELETE` whose return type is `Unit` (no body) | `@ResponseStatus(HttpStatus.NO_CONTENT)` |
 | any `GET`; a `PUT` / `DELETE` that returns a body; a `POST` that searches, verifies, signs in, calls back, or starts an asynchronous job | 200 (no annotation) |
 
-**CTL-19** — No PATCH: a partial update also uses `PUT` (resource replacement). A `DELETE` never takes a request body — a deletion that needs one (a batch of ids, a reason) is a noun-ified `POST` (`POST /api/v1/files/deletions`, `POST /api/v1/orders/{orderId}/cancellations`), the same shape as `/files/copies` and `/files/moves`.
+**CTL-19** — No PATCH, and no partial update. A `PUT` replaces the whole resource representation: its body carries every updatable field, and a nullable field sent as `null` or left out (Jackson binds an absent nullable field to `null`) clears the stored value — never "leave unchanged". CTL-3's nullable-means-optional governs query and path parameters, not what a `PUT` body field means. A `DELETE` never takes a request body — a deletion that needs one (a batch of ids, a reason) is a noun-ified `POST` (`POST /api/v1/files/deletions`, `POST /api/v1/orders/{orderId}/cancellations`), the same shape as `/files/copies` and `/files/moves`.
 
 **CTL-20** — No screen- or widget-shaped endpoints. When a screen requirement (a dashboard widget, a view toggle) needs data, first check whether an existing resource already expresses it — `/orders` and `/orders/counts` with their filters, sort and `size`. A new endpoint is a RESTful resource of the domain that owns the data, and similar reads (three kinds of ranking; counts per member, per product and per category) are one resource, not one endpoint each. Which widgets show and how the view switches is the client's concern; the server carries only authorization per resource. An endpoint only a system administrator may call has `/api/v1/admin` in its path.
 
@@ -439,7 +439,7 @@ Allowed in the controller: flowing Service results straight into `from`, extract
 // ❌ parsing + enum + dispatch in the controller
 fun handlePaymentCallback(@RequestBody request: PaymentCallbackRequest) {
     val (kind, paymentId) = parseCallbackContext(request.callbackContext)
-    val method = runCatching { Payment.Method.valueOf(request.method) }.getOrElse { throw ... }
+    val method = Payment.Method.entries.firstOrNull { it.name == request.method } ?: throw ...
     when (kind) { CallbackKind.APPROVED -> ...; CallbackKind.CANCELED -> ... }
 }
 // ✅ controller delegates; parse/enum/dispatch live in the Service

@@ -38,14 +38,14 @@
 | STY-31 | | A time-of-day `@Scheduled(cron)` declares `zone` as the application time zone | [§11](#11-time-and-durations) |
 | STY-32 | | Compare and order `ZonedDateTime` through `isBefore`/`isAfter`/`isEqual` or `toInstant()`, never `equals`/`<`/`compareTo` | [§11](#11-time-and-durations) |
 | STY-33 | | Durations in code are `java.time.Duration`, never a number with a unit suffix | [§11](#11-time-and-durations) |
-| STY-34 | | An entity state-change method logs the fields it assigns at INFO, `id` first | [§12](#12-logging) |
+| STY-34 | | An entity state-change method logs the fields it assigns at INFO, `id` first; an unbounded bulk change uses bulk DML and one INFO summary instead | [§12](#12-logging) |
 | STY-35 | | Application logs read `{Subject} {action}: key=value, …` at the level §12 assigns; every operation leaves an INFO line with its result, and a line repeated inside one operation is DEBUG | [§12](#12-logging) |
 | STY-36 | | Never log a password, token or secret, or interpolate a whole command or properties object | [§12](#12-logging) |
 | STY-37 | | A service does not repeat a change its entity already logged | [§12](#12-logging) |
 | STY-38 | | A data class holding a secret overrides `toString` to mask it | [§12](#12-logging) |
 | STY-39 | | Absorb a failure only for a best-effort side effect, and log it at WARN with the exception | [§13](#13-failure-handling) |
-| STY-40 | | Catch the narrowest type; catch `Throwable` only to clean up and rethrow | [§13](#13-failure-handling) |
-| STY-41 | | No `runCatching` inside a `suspend` function | [§13](#13-failure-handling) |
+| STY-40 | | Catch the narrowest type; catch `Throwable` only to clean up and rethrow; `runCatching` only where a failure is absorbed | [§13](#13-failure-handling) |
+| STY-41 | | No `runCatching` inside a `suspend` function; a catch there rethrows `CancellationException` | [§13](#13-failure-handling) |
 | STY-42 | | A failed remote lookup degrades to empty only for display enrichment, and its KDoc says so | [§13](#13-failure-handling) |
 | STY-43 | | No `Executors.new*` or unbounded thread-per-task inside a bean; run background work on a Spring-managed executor | [§14](#14-threads-retries-and-lifecycle) |
 | STY-44 | | `runBlocking` only at the boundary to a blocking API | [§14](#14-threads-retries-and-lifecycle) |
@@ -73,7 +73,7 @@ Kotlin, Spring Boot and a Gradle (multi-module) build. `./gradlew ktlintFormat` 
 | **STY-1** | Logging | Log through the project's single logger idiom; never `LoggerFactory.getLogger(…)` or a per-class `KotlinLogging.logger`. The default idiom is the `Logger` base class below — a project may already have its own equivalent; use that. Sole exception: a class whose supertype declares a `logger` member (`ResponseEntityExceptionHandler`, `OncePerRequestFilter`, …) uses a file-level `private val log = KotlinLogging.logger {}`. An inherited member wins over a companion-object member, so in such a class `companion object : Logger()` is shadowed and `logger.info { … }` compiles as commons-logging `Log.info(Object)`, logging the lambda object; a file-level `logger` is shadowed the same way, hence `log`. [Example](examples/code-style.md#sty-1--logger-base-class) |
 | **STY-2** | Imports | Always `import`; never inline a fully qualified name (`com.example.…`) in code or tests |
 | **STY-3** | Functions | Expression body for simple functions |
-| **STY-4** | Dependency injection | Constructor injection only |
+| **STY-4** | Dependency injection | Constructor injection only in production code; a test class takes `@Autowired lateinit var` fields ([TST-3](testing.md#2-test-infrastructure)) |
 | **STY-5** | Primary keys | `UUID`. Exceptions are explicitly listed entities only, in three shapes: a generated `Long`, a `String` natural key (upserted with `ON CONFLICT`), and a composite `@IdClass` key ([REPOSITORY §6](repository.md#6-entity-mapping)) |
 | **STY-6** | Section comments | No banner comments such as `// === Create ===`; method order is a convention ([SVC-21](service.md#7-method-order)), not a comment |
 
@@ -93,7 +93,7 @@ Timestamps follow [§11](#11-time-and-durations). An optional `@RequestParam` fo
 
 ## 3. Kotlin syntax
 
-**STY-7** — No not-null assertion `!!`, in production code or tests. Unwrap with `requireNotNull(x) { "<context message>" }` where the failure-forms table of [SERVICE §5](service.md#5-exceptions-and-failure-forms) allows it: for an internal invariant inside a Service or Command, and freely outside Service and Command (`SpringBootTestSupport` and other test infrastructure, utils, repository tests). The stdlib `require`/`check`/`error` follow the same table; they are not a way around this rule, and a null branch the table does not allow becomes a named domain exception. Where the platform guarantees non-null (`@Autowired lateinit var` read after `@PostConstruct`), express it with `lateinit` or `by lazy` so nullability never arises.
+**STY-7** — No not-null assertion `!!`, in production code or tests. Unwrap with `requireNotNull(x) { "<context message>" }` where the failure-forms table of [SERVICE §5](service.md#5-exceptions-and-failure-forms) allows it: for an internal invariant inside a Service or Command, and freely outside Service and Command (`SpringBootTestSupport` and other test infrastructure, utils, repository tests). The stdlib `require`/`check`/`error` follow the same table; they are not a way around this rule, and a null branch the table does not allow becomes a named domain exception. Where the platform guarantees non-null, express it with `lateinit` or `by lazy` so nullability never arises: in production code a value built on first use (`val logger by lazy { … }` of the STY-1 base class), in a test class an `@Autowired lateinit var` field ([TST-3](testing.md#2-test-infrastructure)). Field injection stays test-only (STY-4).
 
 ✅ `requireNotNull(member) { "member not loaded: id=$id" }` — ❌ `member!!.name`. [Example](examples/code-style.md#sty-7--not-null-assertion)
 
@@ -172,7 +172,7 @@ Explanation is split by altitude — what a reader needs before opening a file d
 
 - **Present tense, current state only.** A comment states what the code does now. It does not say why it was written this way, what it used to be, what it was renamed or moved from, or which ticket or migration changed it; the history words are listed in the *History or rationale* row of the decision table. Rationale belongs in the project's decision records and history in the commit body.
 - **Domain vocabulary, never a translation of the code.** A comment — summary or line comment alike — that renders type and method names back into prose carries no information and drifts on every refactor. Write what it means in domain vocabulary. [Example](examples/code-style.md#sty-16--sty-17--summaries-and-line-comments)
-- **Format.** `//` for line comments, `/** */` for summaries, written in Korean; only exception messages are English ([SVC-13](service.md#5-exceptions-and-failure-forms)). Never copy the same TODO or temporary-policy marker verbatim across files — keep one canonical location.
+- **Format.** `//` for line comments, `/** */` for summaries, both written in Korean. Exception messages ([SVC-13](service.md#5-exceptions-and-failure-forms)) and log messages (STY-34, STY-35) are English. Never copy the same TODO or temporary-policy marker verbatim across files — keep one canonical location.
 
 **STY-18** — A deliberate simplification with a known ceiling — a global lock, an O(n²) scan, a naive heuristic — may carry one `// ponytail:` line comment: one Korean sentence that states the limit of the current code and how to lift it.
 
@@ -355,7 +355,7 @@ Both rules are review judgments, not machine-detectable.
 
 ## 12. Logging
 
-**STY-34** — An entity state-change method (`update()`, a state transition, `delete()`) logs the fields it assigns, at their current value, at INFO right after mutating. It is a developer-facing application log, separate from any DB audit log and not replaceable by it.
+**STY-34** — An entity state-change method (`update()`, a state transition, `delete()`) logs the fields it assigns, at their current value, at INFO right after mutating. It is a developer-facing application log, separate from any DB audit log and not replaceable by it. The entity cannot tell which path called it, so its line is always INFO. A path that changes an unbounded number of rows (an expiry job, a batch import) therefore does not loop over entity methods: it runs a bulk DML ([REP-30](repository.md#9-cascade-and-bulk-delete)) and logs one INFO summary line with counts and, only when bounded, ids (STY-35). Looping over entity methods is fine for a bounded set — one page or chunk.
 
 | Topic | Rule |
 |---|---|
@@ -364,7 +364,7 @@ Both rules are review judgments, not machine-detectable.
 | List only what changed | Never reflection-dump the full state, and no exclusion patches (blocking annotations, `snapshot()` overrides) — list each assigned field explicitly |
 | Sensitive fields | Log the fact only, never the value (`"Member password updated: id=$id"`) |
 | Large collections and binary | Log a summary, not the contents — e.g. a `count`/`cardinality`, never a `List` that can hold tens of thousands of elements or a `ByteArray` |
-| Associations | By id (`memberId=${member.id}`, `itemIds=${items.map { it.id }}`) — interpolating the entity triggers LAZY initialization and N+1 |
+| Associations | By id (`memberId=${member.id}`) — interpolating the entity triggers LAZY initialization and N+1. A collection by its count (`itemCount=${items.size}`, only when the method already loaded it) or the id of the element it adds or removes (`itemId=${item.id}`) — never an id list, which initializes a LAZY collection and is unbounded |
 | Mutation in a private helper | List what the helper assigns at the call site (e.g. `Order.clearItems()`); do not move the log into the helper (the action phrase differs per caller) |
 | Constant assignments | Omit fields whose value is a constant for that method — the action phrase already carries it (`Member.delete()` → `deletedAt` only; `Order.reopen()` → `id` only). Exception: the transition's primary field stays even when constant (`Order.hold()` → `status=ON_HOLD`) |
 | No-op guard placement | An early return on the state-change method's first line, not an `if` at the call site — the compared value is the entity's own (`Product.update`). Exception: the service owns the guard when it must also skip event publishing or a return value |
@@ -383,8 +383,8 @@ Prod keeps only INFO and above, so it must still show what ran and how it ended.
 |---|---|---|---|---|
 | ERROR | A failure that needs action: risk of data loss or inconsistency, a dead-letter quarantine, a failed rollback, exhausted retries, a 5xx | Pass the exception object (`logger.error(e) { … }`) | `Ship order message quarantined to dead letter`, `Refund rollback failed` | A transient failure that recovers on its own, or a client disconnect → WARN or DEBUG |
 | WARN | An anomaly that was recovered or skipped: dropped or skipped input, one retry attempt, a best-effort failure (STY-39), a 4xx ([SVC-16](service.md#5-exceptions-and-failure-forms)), a security-relevant failure (sign-in failure, two-factor mismatch, permission denial) | Pass the exception object for a failure. A 4xx is one line without a stack trace | `Sign in failed - wrong password`, `Ship order failed, redelivering` | A normal branch of the flow → INFO or DEBUG |
-| INFO | Every operation logs at least one INFO line with its result. An operation is a user action, an event or message received across an async boundary (an after-commit listener, a broker message), a job run, a state change (STY-34), a startup or shutdown fact, or the recovery from a failure | Name the target (id or path) and log the result: what was created, changed, deleted or skipped (ids, counts). An async receipt is logged on receipt, and its handler logs the result. A collection is listed only when its size is bounded, otherwise counted. The actor is not written into the message on a request thread, because the MDC adds it (below). A line on another thread (message listener, executor, `@Async`) names the actor itself (`actorId=`) when the message carries one | `Order canceled: id=…, memberId=…`, `Expired carts removed: count=…`, `Stock sync: productCount=…, updated=…` | A line repeated inside one operation → DEBUG |
-| DEBUG | ① A line repeated inside one operation: per chunk, progress tick, loop item or scheduler tick. ② An intermediate step or a timing. ③ A synchronous "requested" line, but only when the same thread always ends in a result INFO line or a `GlobalExceptionHandler` error naming the same target (extends STY-37). ④ The repeats of a failure that was already reported | Same shape as INFO | `Chunk received`, `Export progress`, `File copy requested` | The only record of an operation or of its result → INFO |
+| INFO | Every operation logs at least one INFO line with its result. An operation is a user action, an event or message received across an async boundary (an after-commit listener, a broker message), a job run, a single-entity state change (STY-34), a startup or shutdown fact, or the recovery from a failure | Name the target (id or path) and log the result: what was created, changed, deleted or skipped (ids, counts). An async receipt is logged on receipt, and its handler logs the result. A collection is listed only when its size is bounded, otherwise counted. The actor is not written into the message on a request thread, because the MDC adds it (below). A line on another thread (message listener, executor, `@Async`) names the actor itself (`actorId=`) when the message carries one | `Order canceled: id=…, memberId=…`, `Expired carts removed: count=…`, `Stock sync: productCount=…, updated=…` | A line repeated inside one operation → DEBUG |
+| DEBUG | ① A line repeated inside one operation: per chunk, progress tick, loop item or scheduler tick — never an entity's STY-34 line, which stays INFO. ② An intermediate step or a timing. ③ A synchronous "requested" line, but only when the same thread always ends in a result INFO line or a `GlobalExceptionHandler` error naming the same target (extends STY-37). ④ The repeats of a failure that was already reported | Same shape as INFO | `Chunk received`, `Export progress`, `File copy requested` | The only record of an operation or of its result → INFO |
 | TRACE | Not used | | | |
 
 DEBUG is enabled only in non-prod profiles (e.g. `local`, `dev`, `release`). Choose the level in this order, and stop at the first match:
@@ -422,9 +422,9 @@ Profiles: the base logging config sets `root: WARN` and the application's base p
 
 **STY-39** — Absorb a failure only for a best-effort side effect whose failure must not fail the caller: cleanup, notification enrichment, metrics. Log it at WARN with the exception object (`logger.warn(e) { … }`). Never a silent `runCatching {}` or an empty `catch`. Compensation after a failed external call follows [TX-4](transactions.md#3-external-calls-and-compensation).
 
-**STY-40** — Catch the narrowest exception type. Catch `Throwable` only to clean up and rethrow. Use `runCatching` when the result is handled as a value (`getOrElse`, `onFailure`), and `try`/`catch` when rethrowing.
+**STY-40** — Catch the narrowest exception type. Catch `Throwable` only to clean up and rethrow. `runCatching` catches `Throwable`, so it appears only where a failure is absorbed on purpose: a best-effort side effect (STY-39) and a compensating call ([TX-4](transactions.md#3-external-calls-and-compensation)). Code that rethrows the failure or converts it into another exception uses `try`/`catch` on the specific type — never `runCatching { … }.getOrElse { throw … }`.
 
-**STY-41** — No `runCatching` inside a `suspend` function: it also catches `CancellationException` and swallows the coroutine's cancellation. Catch the specific type with `try`/`catch`.
+**STY-41** — No `runCatching` inside a `suspend` function: it also catches `CancellationException` and swallows the coroutine's cancellation. Catch the specific type with `try`/`catch`. `CancellationException` extends `IllegalStateException`, so a catch whose type covers it (`IllegalStateException`, `RuntimeException`, `Exception`) is preceded by `catch (e: CancellationException) { throw e }`.
 
 **STY-42** — A remote lookup may degrade to an empty result only when it enriches a display (names, avatars). Its KDoc states the absorbed failure — the "absorbs a failure" trigger of STY-16.
 
@@ -531,7 +531,7 @@ For the same operation, the service input and the wire **share the verb-object a
 
 ## 19. Module and package layout
 
-**STY-54** — A new file, package or module goes where the tables below place it.
+**STY-54** — A new file, package or module goes where the tables below place it. Layer packages take the names in the tables; `api`, `application` and `domain` are never used, neither as a layer inside a domain nor as a package wrapping the domains.
 
 **Modules**
 

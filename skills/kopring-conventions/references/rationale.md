@@ -91,7 +91,7 @@ One shape — `{Subject} {action}: key=value` — lets a single grep find every 
 
 ### STY-39 Failure handling
 
-A failure that is absorbed must still be visible, and only failures whose consequence is bounded (cleanup, enrichment, metrics) may be absorbed at all. `Throwable` includes `OutOfMemoryError` and interrupts, so catching it is only safe when the block rethrows after cleanup. `runCatching` inside a `suspend` function also catches `CancellationException`, which breaks structured cancellation. A remote lookup that degrades to empty looks like "no data" to its caller, so it is allowed only where empty is harmless — display enrichment — and the KDoc says so.
+A failure that is absorbed must still be visible, and only failures whose consequence is bounded (cleanup, enrichment, metrics) may be absorbed at all. `Throwable` includes `OutOfMemoryError` and interrupts, so catching it is only safe when the block rethrows after cleanup. `runCatching` catches `Throwable` too, so it fits only a failure absorbed on purpose; a rethrowing or converting `runCatching` turns an `OutOfMemoryError` or an unrelated bug into the domain exception it throws (STY-40). `runCatching` inside a `suspend` function also catches `CancellationException`, which breaks structured cancellation, and so does any catch of `IllegalStateException` or wider, because `CancellationException` extends it (STY-41). A remote lookup that degrades to empty looks like "no data" to its caller, so it is allowed only where empty is harmless — display enrichment — and the KDoc says so.
 
 ### STY-43 Threads and lifecycle
 
@@ -160,6 +160,10 @@ Unifying everything to 200 OK loses the difference between "created" and "done" 
 ### CTL-3 No required false
 
 A parameter-level default object doubly encodes the same "empty" state as a DTO field default. To allow an empty request, the client sends `{}` and every Request field carries a default.
+
+### CTL-19 PUT replaces the whole resource
+
+With full replacement a `null` in the body has one meaning, "clear", so the server needs no third state to tell "unchanged" from "cleared", and the request alone states the result.
 
 ### CTL-28 Composition in the inbound adapter
 
@@ -236,7 +240,7 @@ Hibernate's `PostgreSQLDialect` emits `for no key update` for `PESSIMISTIC_WRITE
 
 ### SVC-24 Duplicate creates and link semantics
 
-A pre-check (`exists*`) followed by `save` passes for both of two concurrent requests, and the second INSERT fails on the UNIQUE constraint as a raw 500. `translateUniqueViolation` turns that into a domain 409 wherever an insert is guarded by a UNIQUE constraint. Repeating a write should be safe for a client to retry, so linking what is already linked succeeds unchanged (SVC-25); removing what is not there is a 404, like every other single-resource miss.
+A pre-check (`exists*`) followed by `save` passes for both of two concurrent requests, and the second INSERT fails on the UNIQUE constraint as a raw 500. `translateUniqueViolation` turns that into a domain 409 wherever an insert of an entity that carries data is guarded by a UNIQUE constraint — a second insert may carry different data, so it is a real conflict. A link carries nothing a repeat could change, so linking what is already linked succeeds unchanged (SVC-25); it goes through `ON CONFLICT DO NOTHING` because a caught violation has already doomed the transaction. Removing what is not there is a 404, like every other single-resource miss.
 
 ### SVC-26 Handler idempotency
 
@@ -255,6 +259,8 @@ The persistence context is still open while an `AFTER_COMMIT` listener runs inli
 **Why an audit log cannot replace it** — an audit log records only the events it declares, so changes made by schedulers, message handlers or boot-time initializers are not in it, and an audit record whose publish fails after commit is lost; only the log line keeps it.
 
 **Why not a reflection dump** — a dump defaults to "expose everything", so someone must remember to block each new sensitive field. Explicit enumeration flips the default to "nothing goes out".
+
+**Why bulk DML for an unbounded change** — a job that changes ten thousand rows through entity methods would print ten thousand INFO lines and bury every other operation (STY-35). The entity cannot lower its own level, because it does not know which path called it; a bulk DML bypasses the entity method, and one INFO summary keeps the result visible.
 
 ## 6. Enum
 
@@ -304,7 +310,7 @@ When a nested collection goes into a `@JdbcTypeCode(SqlTypes.JSON)` field, Hiber
 
 ### REP-27 Soft delete without a global filter
 
-Some paths deliberately read deleted rows (tombstone lookups for audit and history screens), and a test teardown's `deleteAll()` caught by a global filter leaves soft-deleted rows behind to contaminate the next test. A global filter silently breaks both, so the cost is an explicit one-line predicate in each query.
+Some paths deliberately read deleted rows (tombstone lookups for audit and history screens), and a global filter silently breaks them, so the cost is an explicit predicate in each QueryDSL read, and an `isDeleted` check in the Service after a derived or own-PK read.
 
 ### REP-31 Redis TTL extension uses EXPIRE
 
@@ -319,3 +325,7 @@ Private copies of `runConcurrently` with different thread counts and error colle
 ### TST-22 Exception assertions
 
 When an exception type maps to one ErrorCode, the type already pins the behavior; asserting messages couples tests to wording that carries no contract. The ErrorCode is the contract only where one type carries several codes, and at the HTTP boundary, where `$.type` is what clients branch on.
+
+### TST-33 One shared test context
+
+Spring's test context cache keys on a class's full configuration, so any per-class variation starts another context with its own Testcontainers set and mock singletons in the same JVM, adding startup time and container load for each fork. A forked context's mocks are also not the support's shared ones, so the shared-mock guarantees of TST-3 and TST-26 quietly stop holding for that class.

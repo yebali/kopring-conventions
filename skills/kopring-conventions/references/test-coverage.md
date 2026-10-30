@@ -7,8 +7,8 @@
 | ID | ⚠ | Rule | Detail |
 |---|---|---|---|
 | COV-1 | | Every endpoint covers each parameter variation; on a permission-gated endpoint a missing permission is 403, on a row-scoped endpoint an out-of-scope row is 404 | [§2](#2-controller-coverage) |
-| COV-2 | | Typed parameter binding is exercised through real HTTP; 401 only for endpoints taking the authenticated principal; a `Unit` endpoint asserts status only | [§2](#2-controller-coverage) |
-| COV-3 | | Every public Service method has a success test and one failure test per domain exception it throws | [§3](#3-service-coverage) |
+| COV-2 | | Typed parameter binding is exercised through real HTTP; 401 only for endpoints taking the principal or guarded by the authorization interceptor; a `Unit` endpoint asserts status only | [§2](#2-controller-coverage) |
+| COV-3 | | Every public Service method has a success test asserting a business effect (a pure-mapping create excepted) and one failure test per domain exception it throws | [§3](#3-service-coverage) |
 | COV-4 | | Private branches are reached through public inputs; an unreachable branch is deleted | [§3](#3-service-coverage) |
 | COV-5 | | The listed areas have standalone tests | [§4](#4-areas-that-must-have-a-standalone-test) |
 | COV-6 | | No test that re-verifies JPA, Spring, Jackson or Kotlin behavior | [§5](#5-tests-not-to-write) |
@@ -23,7 +23,7 @@ How a test is written (support class, `@Nested`, helpers, assertions) is [testin
 
 | Variation | Verification |
 |---|---|
-| All required values filled | 200 OK (201 for a creating POST) + response schema |
+| All required values filled | 200, or 201 for a creating POST, or 204 for a `Unit` PUT/DELETE ([CTL-18](controller.md#8-restful-api-design)); the response schema only when there is a body |
 | Optional value omitted (Kotlin nullable or default) | 200 OK + default behavior |
 | Required value missing (raw JSON body, [TST-20](testing.md#8-controller-tests)) | 400 + ErrorCode in `$.type` (`CommonErrorCode.MISSING_REQUIRED_FIELD`) |
 | Format mismatch (UUID as an arbitrary string, negative page, …) | 400 + domain ErrorCode in `$.type` |
@@ -36,7 +36,7 @@ A paginated endpoint also verifies at least one sort key and at least one page-s
 **COV-2** — Three controller-only failure surfaces:
 
 - **Typed parameter binding goes through real HTTP**, even when the repository layer already covers the filter SQL. The String-to-type conversion (`ZonedDateTime?`, `Long?`, enum, range objects, `1.0f - x`, `.toFloatArray()`) and the `toCommand` wiring fail only at the controller, and repository tests pass typed objects directly. A fixture that cannot distinguish the filtered-in row from the filtered-out row does not count as coverage: send a discriminating dataset and assert that only the in-filter rows survive.
-- **401 needs the principal parameter or an enabled authorization interceptor.** The authenticated principal is a controller method parameter (`authUser: AuthUser`) whose `HandlerMethodArgumentResolver` rejects a request without credentials. When the `test` profile disables the authorization interceptor, a MockMvc request without credentials yields 401 only when the controller method declares the principal parameter; a test that needs the interceptor turns it on with `@TestPropertySource(properties = [...])`. With the interceptor off, an endpoint without the principal parameter returns 200 without credentials, so no "missing credentials → 401" test is written for it. Confirm the method signature takes the principal before adding the 401 row. An endpoint that should be authenticated but lacks the parameter is a production finding to report, not a test to force green.
+- **401 needs the principal parameter or the authorization interceptor.** The authenticated principal is a controller method parameter (`authUser: AuthUser`) whose `HandlerMethodArgumentResolver` rejects a request without credentials. The authorization interceptor is enabled in the shared test support configuration for every test; no class turns it on or off ([TST-33](testing.md#2-test-infrastructure)). A MockMvc request without credentials therefore yields 401 when the controller method declares the principal parameter or the interceptor guards the endpoint; an endpoint with neither returns 200 without credentials, so no "missing credentials → 401" test is written for it. Confirm the method signature takes the principal, or the interceptor guards the endpoint, before adding the 401 row. An endpoint that should be authenticated but has neither is a production finding to report, not a test to force green.
 - **A `Unit` endpoint asserts status only.** A `PUT`/`DELETE`/command endpoint that returns `Unit` has an empty body; its HTTP contract is the status plus request deserialization, so it never asserts `jsonPath("$.field")`. The state effect belongs to the Service test. Both layers test the same logic here by design (COV-7).
 
 ## 3. Service coverage
@@ -46,6 +46,8 @@ A paginated endpoint also verifies at least one sort key and at least one page-s
 - every public method a Controller calls has its own `@Nested` group;
 - each group covers success and each throw scenario, one per domain ErrorCode;
 - every ErrorCode a private `check*` method throws is reachable through some combination of public-method inputs.
+
+A success test asserts a business effect: a state transition, a side effect, a derived value or a persisted relation. A pure-mapping create, whose only effect is storing the Command's fields, has none; its controller test (COV-1) covers it, so it is exempt from the Service success test (COV-6). Its failure tests still apply.
 
 Internal Service-to-Service methods such as bare `getEntity()` / `listEntitiesBy…()` may be covered indirectly by the calling domain's test when a standalone test would verify the same branches.
 
@@ -87,7 +89,7 @@ The following areas can fail silently on regression, so each has a standalone te
 | `repo.save(x); assertThat(repo.findById(x.id)).isPresent` | Re-verifies the `JpaRepository` contract |
 | `entity.field = newValue; repo.save(entity); assertThat(repo.findById...field).isEqualTo(newValue)` | Re-verifies JPA dirty checking |
 | `repo.deleteById(x.id); assertThat(repo.findById(x.id)).isEmpty` | Re-verifies `JpaRepository` delete |
-| Asserting only a 1:1 field match right after `Service.create()` | When the Service has no business logic beyond Command → Entity mapping, the Controller's response verification (COV-1) is sufficient |
+| Asserting only a 1:1 field match right after `Service.create()` | When the Service has no business logic beyond Command → Entity mapping, the Controller's response verification (COV-1) is sufficient, and COV-3 exempts that create from a Service success test |
 | Jackson deserialization or Spring DI behavior itself | Re-verifies framework behavior |
 | `data class` generated `equals`/`hashCode`/`copy`/`toString` | Re-verifies Kotlin code generation. Exception: test `equals` only when an `Array`/`FloatArray` field forces a manual override (arrays compare by identity); two tests suffice (same content equal, different content not equal) |
 | Spring singleton bean identity or `associateBy` map stability (a resolver "returns the same instance") | Re-verifies the container, not project logic |

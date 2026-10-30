@@ -29,8 +29,8 @@
 | SVC-21 | | Public methods in CRUD order; state transitions and other actions come last | [§7](#7-method-order) |
 | SVC-22 | | Private methods after public: checks, then step methods in call order, then conversions; `companion object` last | [§7](#7-method-order) |
 | SVC-23 | | Persist a collection with one `saveAll`, never `save` in a loop | [§8](#8-writes-duplicates-and-idempotency) |
-| SVC-24 | | An insert guarded by a UNIQUE constraint runs inside `translateUniqueViolation`, which raises the domain's 409 exception | [§8](#8-writes-duplicates-and-idempotency) |
-| SVC-25 | | Re-creating an existing link succeeds without change; removing a missing link is a 404 | [§8](#8-writes-duplicates-and-idempotency) |
+| SVC-24 | | An insert of an entity that carries data, guarded by a UNIQUE constraint, runs inside `translateUniqueViolation`, which raises the domain's 409 exception | [§8](#8-writes-duplicates-and-idempotency) |
+| SVC-25 | | Re-creating an existing link (a join row with no data of its own) succeeds without change through one `INSERT … ON CONFLICT DO NOTHING`; removing a missing link is a 404 | [§8](#8-writes-duplicates-and-idempotency) |
 | SVC-26 | | A handler of redeliverable messages is idempotent | [§8](#8-writes-duplicates-and-idempotency) |
 | SVC-27 | | Enum layers follow the boundaries the enum crosses; never merge the entity enum with the service enum | [§9](#9-enum-layer-separation) |
 | SVC-28 | | Enum mappers are `{Domain}EnumMapper`/`{Protocol}EnumMapper` with an `else`-less `when` and `to{Layer}{Type}` names | [§9.2](#92-two-mappers) |
@@ -54,7 +54,7 @@ Service code also follows the cross-cutting rules: logging ([STY-1](code-style.m
 
 Services live in `service/*.kt`, Commands and Results in `service/command/*.kt`. A Service owns business logic, transactions and validation.
 
-**SVC-2** — An entity-returning method that another Service calls drops the domain noun, because the receiver already carries it: bare `getEntity`/`findEntityBy…` for one row, `listEntitiesBy…`/`getEntities` for several. `get*` throws the owning domain's not-found exception when the row is absent; `find*` returns null. A qualifier appears only to disambiguate (`getEntityWithItems`, `getActiveEntity`; [SVC-18](#6-cross-domain-access)). These methods are internal: a Controller never calls them, and each is `@Transactional(readOnly = true)` or joins the caller's transaction. ✅ `getEntity(id): Order` ❌ `getOrderEntity(id)`
+**SVC-2** — An entity-returning method that another Service calls drops the domain noun, because the receiver already carries it: bare `getEntity`/`findEntityBy…` for one row, `listEntitiesBy…`/`getEntities` for several. `get*` throws the owning domain's not-found exception when the row is absent; `find*` returns null. A qualifier appears only to disambiguate (`getEntityWithItems`, `getActiveEntity`; [SVC-18](#6-cross-domain-access)). These methods are internal: a Controller never calls them, and each is `@Transactional(readOnly = true)` ([TX-1](transactions.md#2-transaction-boundaries)), which joins the caller's transaction when one is open. ✅ `getEntity(id): Order` ❌ `getOrderEntity(id)`
 
 **SVC-3** — A Service accepts a Command and returns a `*Result`, never an Entity or a Response. The one exception is the internal entity-returning method of SVC-2.
 
@@ -232,7 +232,7 @@ Example: [SVC-38 – SVC-41](examples/service.md#svc-38--svc-39--svc-40--svc-41-
 
 **SVC-17** — A Service never injects another domain's Repository; it calls that domain's Service. The only classes that may inject other domains' repositories are listed in [§6.2](#62-repository-access-exceptions).
 
-**SVC-18** — A qualified entity-returning variant exists for two things only: a different fetch graph (`getEntityWithItems`, `getEntityWithPayments`) or an encapsulated extra check (`getActiveEntity`). The method name says which; a KDoc does not explain the fetch graph or the check ([STY-16](code-style.md#5-comments-and-kdoc)).
+**SVC-18** — A qualified entity-returning variant exists for two things only: a different fetch graph (`getEntityWithItems`, `getEntityWithPayments`) or an encapsulated extra check (`getActiveEntity`, which also drops the soft-deleted row a derived or own-PK read returns — [REP-27](repository.md#8-soft-delete)). The method name says which; a KDoc does not explain the fetch graph or the check ([STY-16](code-style.md#5-comments-and-kdoc)).
 
 Example: [SVC-2 · SVC-17](examples/service.md#svc-2--svc-17--cross-domain-entity-returning-method).
 
@@ -295,7 +295,7 @@ Example: [SVC-20](examples/service.md#svc-20--breaking-a-bean-cycle-without-lazy
 
 **SVC-23** — Persist a collection with one `saveAll`, never `save()` in a loop. `SimpleJpaRepository.saveAll` is itself a loop over `save`, so the rule is about intent and readability: one call says the collection is persisted as a batch. JDBC batching needs `hibernate.jdbc.batch_size`, `hibernate.order_inserts`/`order_updates` and non-`IDENTITY` ids; with those unset, `saveAll` also makes N round trips. An FK parent→child batch is two `saveAll` stages. A loop is correct only when each element needs its own transaction, compensation or external call. ❌ `items.forEach { repo.save(it) }` ✅ `repo.saveAll(items)`. Example: [SVC-23](examples/service.md#svc-23--two-stage-saveall).
 
-**SVC-24** — An insert guarded by a DB UNIQUE constraint runs inside `translateUniqueViolation` (one shared helper), which turns a violation of the named constraint into the domain's 409 exception. The constraint name is a `companion object` constant of the entity (`OrderItem.UNIQUE_ORDER_PRODUCT`; naming per [REP-33](repository.md)), and the block flushes (`saveAndFlush`, `saveAllAndFlush`, `flush()`) so the violation surfaces inside it. A pre-check (`exists*`) may run first to answer the common case with a clean message, but it never replaces the translation: concurrent requests pass the pre-check together.
+**SVC-24** — An insert of an entity that carries data of its own (an order item with a quantity), guarded by a DB UNIQUE constraint, runs inside `translateUniqueViolation` (one shared helper), which turns a violation of the named constraint into the domain's 409 exception. A link carries no data and follows SVC-25 instead. The constraint name is a `companion object` constant of the entity (`OrderItem.UNIQUE_ORDER_PRODUCT`; naming per [REP-33](repository.md)), and the block flushes (`saveAndFlush`, `saveAllAndFlush`, `flush()`) so the violation surfaces inside it. The helper reads the violated constraint from the driver's `PSQLException.serverErrorMessage.constraint`, never from the message text: Hibernate's constraint-name extraction matches the English server message and returns null under a non-English `lc_messages`; the PostgreSQL driver is therefore an `implementation` dependency of the module holding the helper, not `runtimeOnly`. A pre-check (`exists*`) may run first to answer the common case with a clean message, but it never replaces the translation: concurrent requests pass the pre-check together.
 
 The default shape; a project may already have its own equivalent — use that:
 
@@ -304,21 +304,23 @@ inline fun <T> translateUniqueViolation(constraintName: String, conflict: () -> 
     try {
         block()
     } catch (e: DataIntegrityViolationException) {
-        if ((e.cause as? ConstraintViolationException)?.constraintName.equals(other = constraintName, ignoreCase = true)) throw conflict()
+        val violated = (e.mostSpecificCause as? PSQLException)?.serverErrorMessage?.constraint
+        if (violated.equals(other = constraintName, ignoreCase = true)) throw conflict()
         throw e
     }
 ```
 
 ```kotlin
+// OrderItem carries a quantity of its own, so adding a product the order already has is a conflict, not a no-op
 val created = translateUniqueViolation(
     constraintName = OrderItem.UNIQUE_ORDER_PRODUCT,
-    conflict = { OrderItemAlreadyAddedException(addedProducts.map { it.id }) },
+    conflict = { OrderItemAlreadyAddedException(command.items.map { it.productId }) },
 ) {
-    orderItemRepository.saveAllAndFlush(addedProducts.map { OrderItem(order = order, product = it, createdBy = command.memberId) })
+    orderItemRepository.saveAllAndFlush(command.items.map { OrderItem(order = order, product = productsById.getValue(it.productId), quantity = it.quantity, createdBy = command.memberId) })
 }
 ```
 
-**SVC-25** — Re-creating a link or membership that already exists succeeds without change. Removing one that does not exist is a 404 `*NotFoundException`.
+**SVC-25** — A link is a join row that carries no data of its own beyond its two references (and audit columns), such as a product–category row. An entity that carries its own data (a quantity, a price, a status) is not a link and follows SVC-24. Re-creating a link that already exists succeeds without change, as one `INSERT … ON CONFLICT DO NOTHING` through native SQL ([REP-13](repository.md#5-native-sql)). Catching the unique violation cannot return success instead: PostgreSQL aborts the transaction at the failed statement, and the participating `@Transactional` marks it rollback-only, so the commit throws `UnexpectedRollbackException`. Removing a link that does not exist is a 404 `*NotFoundException`.
 
 **SVC-26** — An inbound packet listener, `@TransactionalEventListener` or message-consumer handler that processes externally redeliverable messages is idempotent: dedupe on a natural key or a content hash (`(orderId, payloadHash)`), skip if it exists or upsert, and back it with a DB UNIQUE constraint so a concurrent redelivery loses too. No unconditional append-only `save`. Pure in-process single-shot events are exempt. ❌ `message.items.forEach { repo.save(it) }` ✅ `if (repo.existsBy…(key)) return; repo.saveAll(…)`
 

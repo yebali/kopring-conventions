@@ -4,6 +4,24 @@ Rule identifiers added, changed, removed or renumbered, newest first. A consumin
 
 ## 2026-10-30
 
+Contradictions between rules, resolved:
+
+- **Added** `TST-33`: no test class forks the shared Spring context.
+- **Changed** `STY-40`, `STY-41`: `runCatching` only where a failure is absorbed; a catch in a `suspend` function rethrows `CancellationException`.
+- **Changed** `STY-34`, `STY-35`: an entity change line is always INFO; an unbounded bulk change uses bulk DML and one INFO summary. No id lists of LAZY collections.
+- **Changed** `STY-4`, `STY-7`: field injection is test-only.
+- **Changed** `STY-17`: log messages are English.
+- **Changed** `STY-54`: `api`, `application` and `domain` packages are banned explicitly.
+- **Changed** `TX-1`, `TX-6`, `SVC-2`: `readOnly = true` on every Service read; TX-6 governs programmatic boundaries only.
+- **Changed** `SVC-24`, `SVC-25`: a link is a join row without data and is created by `ON CONFLICT DO NOTHING`; 409 is for entities carrying data; the constraint name comes from `PSQLException`.
+- **Changed** `REP-14`, `REP-28`: no `@Column(unique = true)`; a named `@Table(uniqueConstraints)`, none on a soft-delete column.
+- **Changed** `REP-27`, `SVC-18`: derived and own-PK reads may return deleted rows; the Service filters them.
+- **Changed** `REP-29`: cascade only from a parent's `@OneToMany`/`@OneToOne`, never from `@ManyToOne`.
+- **Changed** `REP-8`, `REP-30`: one Query class per filter axis; a bulk delete is `bulkDeleteBy*`.
+- **Changed** `CTL-3`, `CTL-19`: a PUT replaces the whole resource; `null` clears a field.
+- **Changed** `COV-1`, `COV-2`, `COV-3`, `COV-6`: 204 for a `Unit` endpoint; the authorization interceptor is on in the shared support; a Service success test asserts a business effect.
+- **Changed** `TST-7`, `TST-12`, `TST-13`, `TST-14`, `TST-32`: `init()` assigns no fixture field; one parameterized table per code path.
+
 Corrections to statements that were wrong for Spring Framework 7, Hibernate 7, Spring Boot 4 and springmockk 5:
 
 - **Changed** `TX-2`, `SVC-40`: an `AFTER_COMMIT` listener still holds the pooled connection; only a short call with a configured timeout runs inline, a slow one goes to a Spring-managed executor. A fire-and-forget publish needs a bounded `max.block.ms`.

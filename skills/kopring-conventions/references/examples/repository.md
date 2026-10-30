@@ -10,11 +10,11 @@ interface OrderItemRepository : JpaRepository<OrderItem, UUID>, CustomOrderItemR
     fun findAllByOrder(order: Order): List<OrderItem>
 }
 
-// ✅ QueryDSL Custom Repository with a subquery — the only way to write bulk DML
+// ✅ QueryDSL Custom Repository with a subquery — the only way to write bulk DML; named bulkDeleteBy* (REP-8)
 class CustomOrderItemRepositoryImpl(
     private val queryFactory: JPAQueryFactory,
 ) : CustomOrderItemRepository {
-    override fun deleteAllByMember(member: Member) {
+    override fun bulkDeleteByMember(member: Member) {
         val orderIdsOfMember = JPAExpressions
             .select(order.id).from(order).where(order.member.id.eq(member.id))
         queryFactory.delete(orderItem)
@@ -165,12 +165,12 @@ interface CustomOrderRepository {
 ## REP-14 — Entity `@Column` policy
 
 ```kotlin
-// ✅ let inference do the rest; annotate only special types / non-default length / constraints
+// ✅ let inference do the rest; annotate only special types / non-default length
 @Entity
 class Product(
     @Enumerated(EnumType.STRING) val status: ProductStatus,  // name auto, NOT NULL owned by the migration (REP-16)
     val createdBy: UUID,                                     // no annotation
-    @Column(unique = true, length = 32) val code: String,
+    @Column(length = 32) val code: String,                   // unique only through the migration's partial index (REP-28)
     var name: String,                                        // length default 255
     @Column(length = 64) var sku: String? = null,
     @Column(columnDefinition = "text") var description: String? = null,
@@ -179,12 +179,22 @@ class Product(
     val attributes: Map<String, Any> = emptyMap(),           // JSONB needs both (REP-22)
 )
 
+// ✅ a plain unique constraint sits on @Table under the migration's name (REP-33), so SVC-24 matches it in tests too
+@Entity
+@Table(uniqueConstraints = [UniqueConstraint(name = OrderItem.UNIQUE_ORDER_PRODUCT, columnNames = ["order_id", "product_id"])])
+class OrderItem(
+    …
+) {
+    companion object { const val UNIQUE_ORDER_PRODUCT = "uq_order_item_order_id_product_id" }
+}
+
 // ❌ re-declaring what Hibernate already infers
 @Entity
 class Product(
     @Column(name = "status", nullable = false, length = 32) val status: ProductStatus,
     @Column(name = "created_by", nullable = false) val createdBy: UUID,
     @Column(name = "name", length = 255) var name: String,
+    @Column(unique = true, length = 32) val code: String,   // unnamed → UK<hash> under create-drop, and a full UNIQUE where REP-28 needs a partial one
 )
 ```
 
@@ -274,7 +284,7 @@ private fun by(query: PageOrderQuery): BooleanBuilder =
 ```
 
 ```sql
--- ✅ unique column on a soft-delete entity → partial unique index (REP-28)
+-- ✅ unique column on a soft-delete entity → partial unique index (REP-28); the Product mapping declares no unique constraint for it (REP-14)
 CREATE UNIQUE INDEX uq_product_code
     ON product (code)
     WHERE code IS NOT NULL AND deleted_at IS NULL;
@@ -284,7 +294,7 @@ CREATE UNIQUE INDEX uq_product_code
 
 ```kotlin
 // ❌ JPQL bulk delete mixed with entity delete → TransientObjectException, session inconsistency
-orderItemRepository.deleteAllByOrderId(order.id)   // QueryDSL bulk delete in CustomOrderItemRepositoryImpl
+orderItemRepository.bulkDeleteByOrder(order)   // QueryDSL bulk delete in CustomOrderItemRepositoryImpl
 orderRepository.delete(order)
 
 // ✅ both sides through JPA entity delete

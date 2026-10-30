@@ -6,12 +6,12 @@
 
 | ID | ⚠ | Rule | Detail |
 |---|---|---|---|
-| TX-1 | | `@Transactional` is method-level: `readOnly` for reads, plain for writes, none for stateless or call-interleaving methods | [§2](#2-transaction-boundaries) |
+| TX-1 | | `@Transactional` is method-level: `readOnly = true` on every Service read, plain for writes, none for stateless or call-interleaving methods | [§2](#2-transaction-boundaries) |
 | TX-2 | | No variable or long-running external call inside a transaction (listed exceptions) | [§3](#3-external-calls-and-compensation) |
 | TX-3 | | Pass the upper gate ([STY-27](code-style.md#10-prefer-the-plain-option)) first, then take the first of options 1–3 that fits | [§3](#3-external-calls-and-compensation) |
 | TX-4 | | Compensate only a definite remote failure (an unknown outcome is marked pending and reconciled), in `runCatching`, in reverse creation order, through the owning domain's methods, cleaning non-transactional side effects; a state-changing call sends an idempotency key | [§3](#3-external-calls-and-compensation) |
 | TX-5 | | Open boundaries with `TransactionRunner.inTx`/`inNewTx`; inject a raw `TransactionTemplate` only to reach `TransactionStatus` | [§3](#3-external-calls-and-compensation) |
-| TX-6 | | Open a boundary only for the listed needs; never a read-only boundary around a pure read | [§3](#3-external-calls-and-compensation) |
+| TX-6 | | Open a programmatic boundary (`inTx`) only for the listed needs, never around a pure read; a Service read method's `readOnly` is TX-1 | [§3](#3-external-calls-and-compensation) |
 | TX-7 | | `inNewTx` only for a write that must commit on its own, never as a precaution | [§3](#3-external-calls-and-compensation) |
 | TX-8 | | *If the project uses PostgreSQL advisory locks / Redis:* advisory lock for DB-write atomicity; Redis lock for periodic duplicate runs, holder identification or Redis-only state | [§4](#4-lock-selection) |
 | TX-9 | | *If the project uses PostgreSQL advisory locks:* an advisory lock always runs inside a transaction narrowed with `inTx` to the lock and the DB work | [§4](#4-lock-selection) |
@@ -24,7 +24,7 @@ Repository implementations carry no `@Transactional` ([REP-4](repository.md#2-qu
 
 ## 2. Transaction boundaries
 
-**TX-1** — `@Transactional` is method-level only: a class-level annotation silently propagates the wrong attribute to every newly added method. `@Transactional(readOnly = true)` for reads, plain `@Transactional` for writes, and **no annotation** for stateless methods (pure JWT parsing) and for a method that interleaves DB work with an external call. In the latter, each DB access runs in a collaborator's own transaction or an `inTx { }` boundary, and the external call stays outside all of them ([§3](#3-external-calls-and-compensation)). Example: [TX-1 · TX-5](examples/service.md#tx-1--tx-5--transactional-placement-and-the-boundary-api).
+**TX-1** — `@Transactional` is method-level only: a class-level annotation silently propagates the wrong attribute to every newly added method. `@Transactional(readOnly = true)` on every Service read method, plain `@Transactional` for writes, and **no annotation** for stateless methods (pure JWT parsing) and for a method that interleaves DB work with an external call. In the latter, each DB access runs in a collaborator's own transaction or an `inTx { }` boundary, and the external call stays outside all of them ([§3](#3-external-calls-and-compensation)). A read method carries `readOnly = true` for three reasons: Hibernate sets a read-only session's flush mode to `MANUAL` and keeps no dirty-check snapshots of what it loads, lazy associations can be mapped into the Result inside the boundary, and the read can be routed to a replica if the project has one. TX-6 governs only programmatic boundaries, not this annotation. Example: [TX-1 · TX-5](examples/service.md#tx-1--tx-5--transactional-placement-and-the-boundary-api).
 
 ## 3. External calls and compensation
 
@@ -77,7 +77,7 @@ class TransactionRunner(private val provider: ObjectProvider<TransactionTemplate
 
 `TransactionRunner` is a bean, so each boundary binds to the Spring context that owns the repositories.
 
-**TX-6** — Open a boundary with `inTx { }` if, and only if, one of the rows below holds. Otherwise call the repository directly: with `open-in-view: false` a bare repository call acquires and releases its connection per query, and PostgreSQL's default READ COMMITTED gives each statement a fresh snapshot anyway, so wrapping plain reads buys a consistent snapshot only under REPEATABLE READ — that is, nothing.
+**TX-6** — This rule governs programmatic boundaries only: `transactionRunner.inTx { }` inside a method that carries no `@Transactional` (TX-1's call-interleaving method). A Service read method keeps its `@Transactional(readOnly = true)` (TX-1). Open a boundary with `inTx { }` if, and only if, one of the rows below holds. Otherwise call the repository directly: with `open-in-view: false` a bare repository call acquires and releases its connection per query, and PostgreSQL's default READ COMMITTED gives each statement a fresh snapshot anyway, so wrapping plain reads buys a consistent snapshot only under REPEATABLE READ — that is, nothing.
 
 | Boundary needed when | Why | Example |
 |---|---|---|
@@ -86,7 +86,7 @@ class TransactionRunner(private val provider: ObjectProvider<TransactionTemplate
 | **Bulk UPDATE/DELETE statement** — a QueryDSL `update`/`delete` or a JPQL `executeUpdate` called from a method with no `@Transactional` | JPA refuses a bulk statement outside a transaction (`TransactionRequiredException`) | A digest sender's `inTx` around the claim: it selects the unsent rows with `SKIP LOCKED`, marks them sent, and mails only what it claimed, because the method also holds a remote read and the mail sends and has no boundary |
 | **Lazy association traversed after the block** | Otherwise `LazyInitializationException` | — |
 
-❌ Never open a read-only boundary around a pure read whose block returns a scalar, a locally built DTO, or an association-free entity — that boundary is a no-op, and on a throwing path it makes a nested `REQUIRES_NEW` (a sequence/counter service) hold two pool connections at once. `inTx` is `REQUIRED`, not `REQUIRES_NEW`: it starts a transaction only when none is active and joins an ambient one otherwise.
+❌ Never open a programmatic boundary around a pure read whose block returns a scalar, a locally built DTO, or an association-free entity — that boundary is a no-op, and on a throwing path it makes a nested `REQUIRES_NEW` (a sequence/counter service) hold two pool connections at once. `inTx` is `REQUIRED`, not `REQUIRES_NEW`: it starts a transaction only when none is active and joins an ambient one otherwise.
 
 **TX-7** — `inNewTx` (`REQUIRES_NEW`) is for a write that must commit on its own. It commits at once and survives the caller's rollback, and it is the only safe boundary where the ambient transaction cannot take the write: a read-only transaction, or the `AFTER_COMMIT` phase, where the committed transaction's resources are still bound to the thread, so a `REQUIRED` boundary (`inTx`, `@Transactional`) opened there joins it and its writes are never committed (Spring's documented rule for after-commit callbacks). Wrap the owning service's write in `transactionRunner.inNewTx { }` (or give that service a `REQUIRES_NEW` method) rather than deferring the write to a rollback listener. While an outer transaction is open, it holds a second pool connection. Reach for it only when a transaction-bearing call path (re-entry from `@TransactionalEventListener(AFTER_COMMIT)`) actually exists — never as defensive, preemptive propagation. Example: a reconcile listener whose rebuild can run in the committing thread's `AFTER_COMMIT` phase ([§4](#4-lock-selection) borderline case).
 

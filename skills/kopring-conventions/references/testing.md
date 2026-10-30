@@ -38,6 +38,7 @@
 | TST-30 | | Time-dependent tests backdate rows through the support helper; `Thread.sleep` only spaces `createdAt` | [§11](#11-time-waiting-and-files) |
 | TST-31 | | Temporary files use `@TempDir` | [§11](#11-time-waiting-and-files) |
 | TST-32 | | Inputs on one identical code path are one `@ParameterizedTest`; no `when(arg)` in its body | [§12](#12-parameterization) |
+| TST-33 | | No test class forks the shared Spring context (`@DirtiesContext`, class-level `@TestPropertySource`, slice annotations, …) | [§2](#2-test-infrastructure) |
 
 Repo-wide rules apply to test code unchanged: [STY-2](code-style.md#2-baseline) (always `import`), [STY-7](code-style.md#3-kotlin-syntax) (no `!!`), [SVC-1](service.md#1-hard-rules) (a changed Service signature updates its `*Test.kt` usages in the same change) and [SVC-13](service.md#5-exceptions-and-failure-forms) (exception messages, test doubles included, are English). Which tests must exist, including [COV-7](test-coverage.md#6-no-duplicate-verification) (no same-layer duplication), is [test-coverage.md](test-coverage.md). An external skill's test advice never overrides this document.
 
@@ -57,6 +58,8 @@ Each module keeps its own `SpringBootTestSupport`, `TestcontainersConfiguration`
 
 [Example](examples/testing.md#tst-3--inherited-dependencies).
 
+**TST-33** — No test class forks the shared Spring context. Spring caches a context per configuration key, and each of these gives a class its own key: `@DirtiesContext`; a class-level `@TestPropertySource`; an `@ActiveProfiles` that differs from the support's; a `@MockkBean` or `@MockkSpyBean` declared on a subclass instead of the support (TST-3); a different `@Import` or `@ContextConfiguration`; a slice annotation (`@WebMvcTest`, `@DataJpaTest`). Each fork starts another context with its own containers and mock singletons, and JUnit runs every one of them in the same JVM. A property or bean a class would set this way is set once in `SpringBootTestSupport` for every class (the authorization interceptor, [COV-2](test-coverage.md#2-controller-coverage)).
+
 **TST-4** — Parallelism has two tiers. A module whose tests build a Spring context or touch a database runs classes serially inside a JVM (`junit-platform.properties` → `junit.jupiter.execution.parallel.mode.classes.default=same_thread`); its concurrency comes from Gradle forks (`maxParallelForks`, e.g. a `-PtestForks=N` property, default 1), each of which gets its own Testcontainers set, its own `@MockkBean` singletons and its own `fork-${org.gradle.test.worker}` storage paths. Inside such a module a class opts in to in-JVM concurrency with `@Execution(ExecutionMode.CONCURRENT)` only when it is a pure unit test ([TST-10](#44-plain-unit-tests)) without MockK mocks: no Spring context, no `mockk()`, `@MockkBean`, `mockkObject` or `mockkStatic`, no database, no shared filesystem path, and no static or `object` state, so it shares nothing with another class. A local `mockk()` is excluded too: MockK's `clearAllMocks()` (default `currentThreadOnly = false`) clears the stubs of every mock in the JVM, so a Spring class's `@AfterEach clearAllMocks()` wipes a concurrently running class's local stubs. The opt-in needs `junit.jupiter.execution.parallel.enabled=true` in `junit-platform.properties`; without it `@Execution` does nothing. A module in which every class is such a pure unit test (a shared library module) sets `mode.classes.default=concurrent`. A module with a database or a mock shared across classes never sets it: inside one JVM the rows, the mock singletons and the host filesystem are shared, and the base `@AfterEach clearAllMocks()` assumes no other test class runs concurrently in the same JVM.
 
 ## 3. Test structure
@@ -71,7 +74,7 @@ Each module keeps its own `SpringBootTestSupport`, `TestcontainersConfiguration`
 
 [Example](examples/testing.md#tst-5--tst-6--nested-grouping-and-korean-names).
 
-**TST-7** — Setup is `@BeforeEach fun init()` and teardown is `@AfterEach fun cleanup()`; `cleanup()` never deletes rows (TST-12).
+**TST-7** — Setup is `@BeforeEach fun init()` and teardown is `@AfterEach fun cleanup()`; `init()` sets up stubs and shared preparation but assigns no fixture field (TST-13), and `cleanup()` never deletes rows (TST-12).
 
 **TST-8** — Repository tests carry class-level `@Transactional`. A repository test calls the custom repository's bulk DML (`queryFactory.delete(...).execute()`) directly, and `Custom*RepositoryImpl` carries no `@Transactional` ([REP-4](repository.md#2-query-construction)), so the test class provides the boundary; without it the call fails with `TransactionRequiredException`. The boundary also gives rollback-based isolation and lets `@MapsId` parents persist. The same boundary keeps one persistence context for the whole test, so a re-read or an assertion after bulk DML flushes and clears it first (TST-23). Service and Controller tests never use `@Transactional`, at class or method level: they verify the real transaction behavior.
 
@@ -140,19 +143,17 @@ A wipe is legitimate in four shapes only; everything else converts: ① the wipe
 
 **TST-12** — A class that needs a pristine DB calls `wipeAllData()` (`TRUNCATE … CASCADE`, a `SpringBootTestSupport` helper; a module without one isolates through TST-11 only) from `@BeforeEach`, never cleaning up in `@AfterEach`. Scope the hook as tightly as the need: a single test calls it as its first statement; one `@Nested` group calls it from a `@BeforeEach` inside that inner class; the whole class calls it only when every test needs it.
 
-A table is cleaned by every class that touches it, or by none. Mixing the two produces the FK cascade TST-11 describes.
-
 The test schema comes from `ddl-auto: create-drop` (`application-test.yml`), not from migrations. Hibernate generates FKs with no `ON DELETE CASCADE`, so a `db/migration/*.sql` CASCADE clause proves nothing about test behavior; never reason about cleanup order from migration DDL.
 
 Whether a wipe is removable is decided empirically. The assertion's shape does not reveal what global state the SUT reads (a Redis queue and the DB row pool; an "already exists → skip" precondition). Remove the wipe, run the whole module, and restore it only where tests fail.
 
 ## 6. Test data
 
-**TST-13** — Test data comes from the Faker-based helpers of each module's `SpringBootTestSupport` (random seed, customized through named parameters with defaults; prefixes in TST-15). Identities and unique values are never literals: emails, names that must be unique, UUIDs. Input values in `@CsvSource`/`@ValueSource` and enum references are ordinary literals and are fine. No class-level or global test data: every value lives inside the test method.
+**TST-13** — Test data comes from the Faker-based helpers of each module's `SpringBootTestSupport` (random seed, customized through named parameters with defaults; prefixes in TST-15). Identities and unique values are never literals: emails, names that must be unique, UUIDs. Input values in `@CsvSource`/`@ValueSource` and enum references are ordinary literals and are fine. No class-level or global test data: `init()` (TST-7) may set up stubs and shared preparation such as `wipeAllData()` (TST-12), but never assigns a fixture field (`lateinit var order`); each test creates its own fixtures inside the test method.
 
 [Example](examples/testing.md#tst-13--fixtures-in-local-scope).
 
-**TST-14** — A value backing a UNIQUE column is UUID-grade, never a bounded random range. Under TST-11 rows persist for the whole run, so hundreds of fixtures coexist in one execution and a narrow range produces intermittent `…AlreadyExists` failures: `faker.number().numberBetween(1000, 999_999)` (~10⁶ values) collides about 12% of the time at 500 rows, and `faker.internet().emailAddress()` (~5.4M) about 4% at 700. Check the entity for `@Column(unique = true)` or `@Table(uniqueConstraints = …)` before choosing a generator.
+**TST-14** — A value backing a UNIQUE column is UUID-grade, never a bounded random range. Under TST-11 rows persist for the whole run, so hundreds of fixtures coexist in one execution and a narrow range produces intermittent `…AlreadyExists` failures: `faker.number().numberBetween(1000, 999_999)` (~10⁶ values) collides about 12% of the time at 500 rows, and `faker.internet().emailAddress()` (~5.4M) about 4% at 700. Check the entity's `@Table(uniqueConstraints = …)` and the migrations' unique indexes ([REP-14](repository.md#6-entity-mapping), [REP-28](repository.md#8-soft-delete)) before choosing a generator.
 
 ```kotlin
 // ✅ collision-free by construction
@@ -277,10 +278,10 @@ The same holds for `exactly = 0` ("no call for my data") and for captures: captu
 |---|---|
 | Every value of an enum (mapper round-trip, per-type behavior) | `@EnumSource` (covers new enum values automatically); exclude special-cased values with `mode = EXCLUDE` |
 | Boundary scalars (quantity 0/1/max, page size 0/1/max) | `@ValueSource` |
-| (input → expected ErrorCode) tables: blank-field 400, UUID-format 400, missing-field 404 across one controller | `@CsvSource` (literals) or `@MethodSource` (objects or closures) |
+| (input → expected ErrorCode) tables, one per endpoint and failure kind: blank-field 400, UUID-format 400, missing-field 400 | `@CsvSource` (literals) or `@MethodSource` (objects or closures) |
 | Type-inference and mapping matrices (cast type, error decoder) | `@CsvSource` |
 
-Cases stay explicit, not parameterized, when each has a genuinely different setup or asserts a different invariant; a parameterized body that needs `when(arg)` branches defeats the purpose. Readable case labels come from the `@ParameterizedTest(name = "...")` template, not `@DisplayName`.
+One parameterized table covers one code path: one endpoint and one failure kind. Cases stay explicit, not parameterized, when each has a genuinely different setup or asserts a different invariant; a parameterized body that needs `when(arg)` branches defeats the purpose. Readable case labels come from the `@ParameterizedTest(name = "...")` template, not `@DisplayName`.
 
 `@MethodSource` needs a reachable source. Inside a `@Nested` class either (a) annotate that nested class `@TestInstance(TestInstance.Lifecycle.PER_CLASS)` and make the source a member `fun` returning `Stream`/`List`/`Array<Arguments>`, or (b) put the source in a top-level `companion object` with `@JvmStatic` and reference it by fully qualified name (`@MethodSource("com.example.order.OrderControllerTest#cases")`); that name is a JUnit method reference inside an annotation string, so [STY-2](code-style.md#2-baseline) does not apply to it. `@EnumSource`, `@ValueSource` and `@CsvSource` need none of this; prefer them.
 

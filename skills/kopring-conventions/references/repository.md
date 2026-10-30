@@ -13,7 +13,7 @@
 | REP-5 | | Extract the `by()` predicate and call it inline; never extract the select–join–where–fetch skeleton | [§2.2](#22-by-predicate) |
 | REP-6 | | Use the Q-class default singleton; a self-join alias has a meaningful name | [§2.3](#23-q-class-import) |
 | REP-7 | | No QueryDSL projection unless explicitly asked; load the full entity | [§2](#2-query-construction) |
-| REP-8 | | Repository names: `findBy`/`existsBy`/`countBy`/`deleteBy`, `listByQuery`, `pageByQuery`, `existsByQuery`, `countGroupedBy{Axis}`; never `get*` | [§3](#3-naming-and-query-objects) |
+| REP-8 | | Repository names: `findBy`/`existsBy`/`countBy`/`deleteBy`, `listByQuery`, `pageByQuery`, `existsByQuery`, `countGroupedBy{Axis}`, `bulkDeleteBy`; never `get*` | [§3](#3-naming-and-query-objects) |
 | REP-9 | | Two or more combined or optional conditions go into one Query object; `list`/`page`/`exists`/`count` stay separate methods | [§3.1](#31-multi-condition-reads) |
 | REP-10 | | A paged read uses `PageableExecutionUtils.getPage` and `Page.empty`, never `PageImpl` | [§3.1](#31-multi-condition-reads) |
 | REP-11 | | A null filter means no condition; an empty list matches no rows | [§4](#4-filters-and-ordering) |
@@ -33,9 +33,9 @@
 | REP-24 | | *JSONB:* an insert-only entity with nested-collection JSONB is `@Immutable` | [§7](#7-jsonb) |
 | REP-25 | | *JSONB:* external payload keys are normalized with `@JsonAlias`; raw payloads are never stored | [§7](#7-jsonb) |
 | REP-26 | | *If the project uses pgvector:* embedding similarity goes through `cosineDistanceTo` / `minDistanceTo`; the vector dimension is never hard-coded | [§7](#7-jsonb) |
-| REP-27 | | Soft delete is `deletedAt` + `isDeleted` + `delete()`, filtered in every query, never by `@SQLRestriction`/`@Where` | [§8](#8-soft-delete) |
+| REP-27 | | Soft delete is `deletedAt` + `isDeleted` + `delete()`, filtered explicitly — QueryDSL reads in the predicate, derived and own-PK reads in the Service — never by `@SQLRestriction`/`@Where` | [§8](#8-soft-delete) |
 | REP-28 | | A unique column on a soft-delete entity has a partial unique index | [§8](#8-soft-delete) |
-| REP-29 | | Owning relations cascade `ALL` with `orphanRemoval`; soft-delete parents and high-volume data do not (listed exceptions) | [§9](#9-cascade-and-bulk-delete) |
+| REP-29 | | A parent's `@OneToMany`/`@OneToOne` to children it owns cascades `ALL` with `orphanRemoval`, a `@ManyToOne` never; soft-delete parents and high-volume data do not (listed exceptions) | [§9](#9-cascade-and-bulk-delete) |
 | REP-30 | | Never mix a bulk delete with entity deletes on one path | [§9](#9-cascade-and-bulk-delete) |
 | REP-31 | | *If the project uses Spring Data Redis repositories:* a field used in a derived query is `@Indexed`; a TTL extension uses `EXPIRE`, never a re-`save` | [§10](#10-redis-repositories) |
 | REP-32 | | A Flyway migration is immutable once merged to the shared branch; one feature's schema change is one migration | [§11](#11-migrations) |
@@ -110,12 +110,14 @@ Example: [REP-5](examples/repository.md#rep-5--query-skeleton-stays-inline).
 | Single | `findBy*` / `existsBy*` / `countBy*` / `deleteBy*` | `Entity?` / `Boolean` / `Long` | not needed |
 | Multiple | derived `findAllBy*` (single key) or Custom `listByQuery(query)` (multiple conditions) | `List<Entity>` | `List*Query` (multiple conditions) |
 | Paginated | `pageByQuery(query)` | `Page<Entity>` | `Page*Query` required |
-| Existence (condition-branching) | `existsByQuery(query)` | `Boolean` | `Exists*Query` |
-| Count (condition-branching) | `countByQuery(query)` | `Long` | `Count*Query` |
+| Existence (condition-branching) | `existsByQuery(query)` | `Boolean` | The `List*Query` of the same filter axis, else `Exists*Query` |
+| Count (condition-branching) | `countByQuery(query)` | `Long` | The `List*Query` of the same filter axis, else `Count*Query` |
 | Count (GROUP BY distribution) | `countGroupedBy{Axis}(query)` | `Map<Enum, Long>` | `Count*Query` (one method per axis, Query shared) |
 
 `get*` is a Service prefix; repositories use `find*` for single, `list*`/`findAllBy*` for multiple, `page*` for paged.
 
+- **One filter axis, one Query class** — an `exists`/`count` read on a list read's filter axis takes its `List*Query` (`existsByQuery(ListOrderQuery)`, REP-9); `Exists*Query`/`Count*Query` name an axis that only an existence or count read uses.
+- **Bulk delete is `bulkDeleteBy*`** — a QueryDSL `delete` in a `Custom*RepositoryImpl` is never named `deleteAllBy*`: that reads as a Spring Data derived delete, which removes entity by entity, and REP-30 depends on telling the two apart at the call site.
 - **Standard names are `listByQuery`/`pageByQuery`** — entity-baked variants (`pageOrders`, `findPageBy`) are prohibited. A descriptive name is allowed only when one entity needs more than one distinct paged projection (e.g. `pageWithItemSummary` beside `pageByQuery` on `Order`); the entity's main filtered page is always `pageByQuery`.
 - **GROUP BY distribution count** — `countBy*` is a derived-query prefix and reads as "filtered count", so the grouping axis is named `countGroupedBy{Axis}(query): Map<Enum, Long>` (`countGroupedByStatus`). The filter axis is carried by the `Count*Query` type, not the name; two axes get two methods sharing the Query. A family that returns a projection list (e.g. counts grouped by product and status together) is not `Map<Enum, Long>` and is outside this naming rule.
 
@@ -175,11 +177,11 @@ entityManager.createNativeQuery("SELECT p.id, p.stock FROM product p WHERE p.sku
 | Option | Use | Reason |
 |--------|-----|--------|
 | `name` | ❌ | `PhysicalNamingStrategy` maps camelCase to snake_case (`shippedAt` → `shipped_at`) |
-| `nullable` | ❌ | NOT NULL is owned by the Flyway migration, and `ddl-auto=validate` does not check nullability — the annotation only shapes `ddl-auto: update` local DDL while duplicating what the Kotlin type already states |
+| `nullable` | ❌ | NOT NULL is owned by the Flyway migration, and `ddl-auto=validate` does not check nullability — the annotation shapes only the `create-drop` test schema and `update` local DDL, where a NOT NULL catches nothing the non-null Kotlin type has not already rejected at compile time |
 | `insertable` / `updatable` | ❌ | One column is never mapped twice. A reference is a `@ManyToOne` read through `foo?.id` (REP-15); Kotlin `val` gives code-level read-only |
 | `columnDefinition` | ✅ | PostgreSQL types Hibernate cannot infer: `jsonb`, `text` |
 | `length` | ✅ | Only when ≠ the default 255 |
-| `unique` | ✅ | Single-column UNIQUE (compound → `@Table(uniqueConstraints = …)`) |
+| `unique` | ❌ | Unnamed, it becomes `UK<hash>` in the `create-drop` test schema, where SVC-24's match by name never fires. Declare `@Table(uniqueConstraints = [UniqueConstraint(name = "uq_<table>_<columns>", columnNames = [...])])` under the migration's constraint name (REP-33). A column with a partial unique index (REP-28) declares no unique constraint in the mapping — that index lives only in the migration |
 
 Accepted exceptions:
 
@@ -230,23 +232,23 @@ Example: [REP-22 · REP-23 · REP-24](examples/repository.md#rep-22--rep-23--rep
 
 ## 8. Soft delete
 
-**REP-27** — An entity that keeps a deletion trail has a nullable `deletedAt` instead of a physical delete, in three fixed pieces: the `deletedAt` column (`protected set`), an `isDeleted` getter, and a `delete()` transition method that logs only the field it assigns ([STY-34](code-style.md#12-logging)). Filtering is always stated in the query — never `@SQLRestriction`, `@SQLDelete` or `@Where`. Single and list reads `and` `deletedAt.isNull` in the where clause; paged reads seed the `by()` builder with it.
+**REP-27** — An entity that keeps a deletion trail has a nullable `deletedAt` instead of a physical delete, in three fixed pieces: the `deletedAt` column (`protected set`), an `isDeleted` getter, and a `delete()` transition method that logs only the field it assigns ([STY-34](code-style.md#12-logging)). Filtering is always stated explicitly — never `@SQLRestriction`, `@SQLDelete` or `@Where`. QueryDSL reads keep `deletedAt.isNull` in the predicate: single and list reads `and` it in the where clause; paged reads seed the `by()` builder with it. A derived query (`findAllByOrder`) or an own-PK read (`findById`) carries no such condition — REP-2 row 1 allows no `And`, and REP-9 keeps own-PK reads derived — so it may return deleted rows, and the Service filters them through its `getActiveEntity` ([SVC-18](service.md#6-cross-domain-access)) or an `isDeleted` check.
 
 **REP-28** — A unique column on a soft-delete entity has a partial unique index (`WHERE deleted_at IS NULL`); a plain UNIQUE lets a deleted row occupy the value forever and blocks re-registration with the same code.
 
-- **Partial indexes exist only where Flyway runs.** JPA `@Table`/`@Column` cannot express a `WHERE` clause, so a profile on `ddl-auto: create-drop` (tests) or `update` (local) has no unique constraint on such a column — duplicate codes are accepted there. Tests account for this.
+- **Partial indexes exist only where Flyway runs.** JPA `@Table`/`@Column` cannot express a `WHERE` clause, so the mapping declares no unique constraint on such a column (REP-14), and a profile on `ddl-auto: create-drop` (tests) or `update` (local) has no unique constraint on such a column — duplicate codes are accepted there. Tests account for this.
 - **Accepted non-partial exceptions**: a value that must stay occupied after soft delete (an email that can never be re-registered, an ordinal a deleted row keeps) uses a plain UNIQUE on purpose.
 
 Example: [REP-27 · REP-28](examples/repository.md#rep-27--rep-28--soft-delete-shape).
 
 ## 9. Cascade and bulk delete
 
-**REP-29** — Owning relationships declare `cascade = [CascadeType.ALL], orphanRemoval = true`, backed by DB `ON DELETE CASCADE` (defense in depth).
+**REP-29** — A parent's `@OneToMany`/`@OneToOne` to the children it owns as an aggregate declares `cascade = [CascadeType.ALL], orphanRemoval = true`, backed by DB `ON DELETE CASCADE` (defense in depth). Never cascade from a `@ManyToOne`: it is JPA's owning (foreign-key) side, so a cascaded `REMOVE` there deletes the parent with the child.
 
 - **Soft-delete entities** (REP-27) cascade nothing; the Service handles deletion explicitly. Accepted exception: a collection that is the soft-delete parent's live child set, replaced as a whole on every edit (`Order.items` on every order edit), keeps `cascade = ALL, orphanRemoval = true` — the parent row is only soft-deleted, so the cascade never removes it.
 - **High-volume accumulating data** (event logs, per-order tracking records) has no `@OneToMany` on its parent — loading it would risk OOM.
 
-**REP-30** — A JPQL bulk delete (QueryDSL `queryFactory.delete`) is never mixed with entity deletes on one path (`TransientObjectException`, session inconsistency): a path deletes entities throughout, or runs bulk deletes only.
+**REP-30** — A JPQL bulk delete (QueryDSL `queryFactory.delete`, named `bulkDeleteBy*` by REP-8) is never mixed with entity deletes on one path (`TransientObjectException`, session inconsistency): a path deletes entities throughout, or runs bulk deletes only.
 
 Example: [REP-30](examples/repository.md#rep-30--bulk-delete-mixing).
 

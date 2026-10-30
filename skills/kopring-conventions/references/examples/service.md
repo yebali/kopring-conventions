@@ -61,7 +61,7 @@ Domain B exposes an entity-returning method, and domain A calls it instead of in
 class MemberService(private val memberRepository: MemberRepository) : Logger() {
     @Transactional(readOnly = true)
     fun getEntity(id: UUID): Member =
-        memberRepository.findByIdAndDeletedAtIsNull(id) ?: throw MemberNotFoundException(id)
+        memberRepository.findByIdOrNull(id)?.takeUnless { it.isDeleted } ?: throw MemberNotFoundException(id)   // findById returns deleted rows too (REP-27)
 }
 // ✅ the order domain calls it instead of injecting MemberRepository
 @Service

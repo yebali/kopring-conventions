@@ -97,11 +97,11 @@ class OrderServiceTest : SpringBootTestSupport() {
 @Transactional
 class CustomOrderRepositoryImplTest : SpringBootTestSupport() {
     @Test
-    fun `memberId 에 속한 모든 주문을 삭제한다`() {
+    fun `회원에 속한 모든 주문을 삭제한다`() {
         val member = saveMember()
         val order = saveOrder(member = member)
 
-        orderRepository.deleteAllByMemberId(member.id)
+        orderRepository.bulkDeleteByMember(member)
         entityManager.flush()
         entityManager.clear()                            // bulk DML left the loaded order stale (TST-23)
 
@@ -113,8 +113,12 @@ class CustomOrderRepositoryImplTest : SpringBootTestSupport() {
 //    to this test's own ids (TST-11). A rolled-back Repository test needs no cleanup at all.
 class OrderServiceTest : SpringBootTestSupport() {
     @Test
-    fun `주문을 생성한다`() {
-        val result = orderService.create(command)
+    fun `주문하면 재고가 주문 수량만큼 줄어든다`() {
+        val product = saveProduct(stock = 10)
+
+        orderService.create(buildCreateOrderCommand(productId = product.id, quantity = 3))
+
+        assertThat(productRepository.findByIdOrNull(product.id)?.stock).isEqualTo(7)
     }
 }
 ```
@@ -151,16 +155,17 @@ class OrderCsvParserTest {
 ## TST-13 — Fixtures in local scope
 
 ```kotlin
-// ✅ Good — faker helper + local variables
+// ✅ Good — faker helper + local variables; the success test asserts a derived value (COV-3)
 class MemberServiceTest : SpringBootTestSupport() {
     @Test
-    fun `가입에 성공한다`() {
+    fun `가입하면 이메일을 소문자로 정규화해 저장한다`() {
         val email = randomEmail()
-        val member = saveMember(email = email)
-        assertThat(member.email).isEqualTo(email)
+        val member = saveMember(email = email.uppercase())
+        assertThat(memberRepository.findByIdOrNull(member.id)?.email).isEqualTo(email)
     }
 
-    private fun saveMember(email: String = randomEmail()): Member = memberService.register(command)  // helper calls service
+    private fun saveMember(email: String = randomEmail()): Member =
+        memberService.register(RegisterMemberCommand(email = email))  // helper calls service with its input
 }
 
 // ❌ Bad — literal identities + class-level properties
