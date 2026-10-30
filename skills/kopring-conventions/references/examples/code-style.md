@@ -199,7 +199,7 @@ fun createOrder(request: CreateOrderRequest, authUser: AuthUser): OrderResponse 
         .let(OrderResponse::from)
 ```
 
-**(b) Inline the argument** — with ktlint `max_line_length` off, length is never a reason to extract a `val`; wrap inside the argument instead:
+**(b) Inline the argument** — with ktlint's line-length check disabled (STY-9), length is never a reason to extract a `val`; wrap inside the argument instead:
 
 ```kotlin
 // ❌ Bad — `cmd` exists solely for the uploadProductImages call
@@ -317,5 +317,5 @@ data class RegisterProductRequest(
 |---|---|
 | `Seller` (inner of `RegisterProductRequest`) | `SellerPayload` · `SellerDto` · `SellerData` |
 | `Item` (inner of `CreateOrderRequest`) | `ItemPayload` · `ItemInfo` |
-| `ItemDto` (Result inner) | `ItemInfoDto` (`Info` is noise) |
+| `Item` (Result inner) | `ItemDto` · `ItemInfoDto` |
 | `ItemDto` (collision avoidance) | `ItemDTO` (all-caps forbidden) |

@@ -6,7 +6,7 @@
 
 | ID | ⚠ | Rule | Detail |
 |---|---|---|---|
-| CFG-2 | | A required value has no fallback: a bare `${ENV}` placeholder, so a missing value fails startup | [§2](#2-environment-values) |
+| CFG-2 | | A required value has no fallback (a bare `${ENV}` placeholder), and its properties class fails fast when it is unset | [§2](#2-environment-values) |
 | CFG-3 | | `${ENV:default}` only when "absent" has a defined meaning and the default works correctly | [§2](#2-environment-values) |
 | CFG-7 | | Every property Kotlin references is declared in the yml | [§2](#2-environment-values) |
 | CFG-12 | | No `@ConfigurationProperties` field that no code reads | [§3](#3-properties-classes) |
@@ -21,7 +21,15 @@ Durations in code follow [STY-33](code-style.md#11-time-and-durations).
 
 ## 2. Environment values
 
-**CFG-2** — A required value has no fallback: leave it as a bare placeholder like `${DB_HOST}` so a missing value fails startup instead of starting on a guess.
+**CFG-2** — A required value has no fallback: leave it as a bare placeholder like `${DB_HOST}` instead of starting on a guess. A bare placeholder alone does not fail startup for `@ConfigurationProperties`: Boot's `PropertySourcesPlaceholdersResolver` ignores an unresolvable placeholder, so a `String` field binds the literal `"${API_KEY}"` and the application starts — only `@Value` or a type-conversion failure stops it. A properties class therefore checks each required `String` property in `init`; Bean Validation (`@Validated`) is not used ([CTL-14](controller.md#6-validation)).
+
+```kotlin
+data class AppProperties(val apiKey: String) {
+    init {
+        require(apiKey.isNotBlank() && !apiKey.startsWith("\${")) { "app.api-key is not set" }
+    }
+}
+```
 
 **CFG-3** — An optional knob may use `${ENV:default}` only when "absent" has a well-defined meaning and the default works correctly (`${MAIL_RELAY_URL:}` for "no relay", `${STREAM_REPLICAS:1}`).
 

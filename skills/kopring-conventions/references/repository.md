@@ -7,9 +7,9 @@
 | ID | ⚠ | Rule | Detail |
 |---|---|---|---|
 | REP-1 | | No `@Query` or `@Modifying` on any repository method | [§2](#2-query-construction) |
-| REP-2 | | Derived query for a single field, QueryDSL `Custom*Repository` for everything else, `@EntityGraph` only for the listed exceptions | [§2.1](#21-priority) |
+| REP-2 | | Derived query for a single field, QueryDSL `Custom*Repository` for everything else, `@EntityGraph` only for the listed exception | [§2.1](#21-priority) |
 | REP-3 | | No stereotype annotation on `Custom*RepositoryImpl` | [§2](#2-query-construction) |
-| REP-4 | | No `@Transactional` on `Custom*RepositoryImpl`; with two collection fetch joins declare one side a `Set` | [§2](#2-query-construction) |
+| REP-4 | | No `@Transactional` on `Custom*RepositoryImpl`; at most one collection fetch join per query, none in a paged read | [§2](#2-query-construction) |
 | REP-5 | | Extract the `by()` predicate and call it inline; never extract the select–join–where–fetch skeleton | [§2.2](#22-by-predicate) |
 | REP-6 | | Use the Q-class default singleton; a self-join alias has a meaningful name | [§2.3](#23-q-class-import) |
 | REP-7 | | No QueryDSL projection unless explicitly asked; load the full entity | [§2](#2-query-construction) |
@@ -20,15 +20,15 @@
 | REP-12 | | Every ordering ends with the entity id as a tie-breaker | [§4](#4-filters-and-ordering) |
 | REP-13 | | Native SQL binds every value as a parameter and reads rows through `Tuple` aliases | [§5](#5-native-sql) |
 | REP-14 | | `@Column` only for what Hibernate cannot infer (listed exceptions) | [§6](#6-entity-mapping) |
-| REP-15 | | A reference to another entity — in another domain or the same one — is a `@ManyToOne`, never a raw id field | [§6](#6-entity-mapping) |
+| REP-15 | | A reference to another entity — in another domain or the same one — is a `@ManyToOne(fetch = FetchType.LAZY)`, never a raw id field | [§6](#6-entity-mapping) |
 | REP-16 | | Enum columns are `@Enumerated(EnumType.STRING)` | [§6](#6-entity-mapping) |
 | REP-17 | | A JPA entity's state fields have a `protected set`; state changes through named transition methods (a `@RedisHash` entity: §10) | [§6](#6-entity-mapping) |
 | REP-18 | | Transition methods are short verbs without the cause or the target state | [§6](#6-entity-mapping) |
 | REP-19 | | `Persistable` only on entities saved in bulk with application-assigned ids | [§6](#6-entity-mapping) |
 | REP-20 | | Escape PostgreSQL keywords in `@Table`; no reserved words as property names | [§6](#6-entity-mapping) |
-| REP-21 | | Entities carry no Spring dependency; a delegated computed property needs its relation loaded | [§6](#6-entity-mapping) |
+| REP-21 | | Entities carry no Spring dependency; a read that uses a delegated computed property fetch-joins its relation | [§6](#6-entity-mapping) |
 | REP-34 | | Keep entities simple: a value derivable from the entity's own properties is a computed `get()` property, never a stored field or column (listed exceptions) | [§6](#6-entity-mapping) |
-| REP-22 | ⚠ | *If the project uses PostgreSQL JSONB:* a JSONB column carries both `@JdbcTypeCode(SqlTypes.JSON)` and `@Column(columnDefinition = "jsonb")` | [§7](#7-jsonb) |
+| REP-22 | | *If the project uses PostgreSQL JSONB:* a JSONB column carries both `@JdbcTypeCode(SqlTypes.JSON)` and `@Column(columnDefinition = "jsonb")` | [§7](#7-jsonb) |
 | REP-23 | | *JSONB:* JSONB queries go through one shared JSONB query util; JSONB values compare and sort as text | [§7](#7-jsonb) |
 | REP-24 | | *JSONB:* an insert-only entity with nested-collection JSONB is `@Immutable` | [§7](#7-jsonb) |
 | REP-25 | | *JSONB:* external payload keys are normalized with `@JsonAlias`; raw payloads are never stored | [§7](#7-jsonb) |
@@ -38,7 +38,7 @@
 | REP-29 | | Owning relations cascade `ALL` with `orphanRemoval`; soft-delete parents and high-volume data do not (listed exceptions) | [§9](#9-cascade-and-bulk-delete) |
 | REP-30 | | Never mix a bulk delete with entity deletes on one path | [§9](#9-cascade-and-bulk-delete) |
 | REP-31 | | *If the project uses Spring Data Redis repositories:* a field used in a derived query is `@Indexed`; a TTL extension uses `EXPIRE`, never a re-`save` | [§10](#10-redis-repositories) |
-| REP-32 | | An applied Flyway migration is immutable; one feature's schema change is one migration | [§11](#11-migrations) |
+| REP-32 | | A Flyway migration is immutable once merged to the shared branch; one feature's schema change is one migration | [§11](#11-migrations) |
 | REP-33 | | A new unique constraint is named `uq_<table>_<columns>` | [§11](#11-migrations) |
 
 Rules other files own apply to repository and entity code as well: imports [STY-2](code-style.md#2-baseline), comments [STY-16 and STY-17](code-style.md#5-comments-and-kdoc), entity change logging [STY-34](code-style.md#12-logging), CRUD method order [SVC-21](service.md#7-method-order), collection persistence [SVC-23](service.md#8-writes-duplicates-and-idempotency), and cross-domain repository access [SVC-17](service.md#6-cross-domain-access).
@@ -51,11 +51,11 @@ Rules other files own apply to repository and entity code as well: imports [STY-
 
 **REP-3** — No stereotype (`@Repository`/`@Component`) on a `Custom*RepositoryImpl`; the Spring Data `*Impl` fragment mechanism registers the bean. The `Custom*Repository` interface with its single implementation is the shape Spring Data requires, not a target for [STY-28](code-style.md#10-prefer-the-plain-option) or an external skill's "no interface with one implementation" advice.
 
-**REP-4** — No `@Transactional` on a `Custom*RepositoryImpl` class or method; the calling Service owns the boundary ([TX-1](transactions.md#2-transaction-boundaries)). Load what one read needs in a single fetch-join query; when that query fetch-joins two or more collections, declare one side a `Set` to avoid `MultipleBagFetchException`.
+**REP-4** — No `@Transactional` on a `Custom*RepositoryImpl` class or method; the calling Service owns the boundary ([TX-1](transactions.md#2-transaction-boundaries)). Load what one read needs with fetch joins, at most one collection fetch join per query; a second collection is loaded by a separate query or by batch fetching (`hibernate.default_batch_fetch_size`). Declaring one side a `Set` only hides `MultipleBagFetchException`: the query still returns the cartesian product (rows × |A| × |B|). An `@EntityGraph` is no way around it — Hibernate turns graph attributes into join fetches. A paged read never fetch-joins a collection: Hibernate warns HHH90003004 and pages in memory after loading every row. Page the ids first, then fetch the entities by those ids.
 
 **REP-7** — A QueryDSL projection (`select(entity.field)`, `select(entity.id)`) only on explicit instruction — never introduced while optimizing or refactoring. The default is the full entity (`selectFrom(order)`).
 
-**Project-wide defaults** — `open-in-view: false` (lazy-loading discipline), a Hibernate batch size of 1000–2000 for bulk operations, `@EntityGraph`/fetch join for eager loading, and `@Transactional(readOnly = true)` on Service reads. Code works with them, not around them.
+**Project-wide defaults** — `open-in-view: false` (lazy-loading discipline), a Hibernate batch size of 1000–2000 (`hibernate.jdbc.batch_size` for bulk writes, `hibernate.default_batch_fetch_size` for lazy-loading batches), `@EntityGraph`/fetch join for eager loading, and `@Transactional(readOnly = true)` on Service reads. Code works with them, not around them.
 
 ### 2.1 Priority
 
@@ -65,10 +65,10 @@ Rules other files own apply to repository and entity code as well: imports [STY-
 |---|----------|-------|
 | 1 | **Spring Data derived query** | A single one-segment field — `findBy{X}`/`existsBy{X}`/`countBy{X}`/`deleteBy{X}`. No nested paths, no `And`/`Or` |
 | 2 | **QueryDSL `Custom*Repository` + `Custom*RepositoryImpl`** | Everything else — compound, nested, dynamic predicates, subqueries, multi-table joins, pagination and sort, and `@EntityGraph` rewritten as `leftJoin().fetchJoin()` |
-| 3 | **`@EntityGraph` + derived query** | Only for the exceptions below |
+| 3 | **`@EntityGraph` + derived query** | Only for the exception below |
 | 4 | **`@Query` / `@Modifying`** | Prohibited (REP-1) |
 
-**`@EntityGraph` exceptions** (justified in KDoc): (a) a `MultipleBagFetchException` risk — eager-fetching two or more `List` collections in one query; (b) a Java/Kotlin reserved-word property — QueryDSL kapt silently skips the Q-class path for it. For (b) the first resort is renaming the property or class away from the reserved word (`@Table` keeps the DB name); `@EntityGraph` + derived query applies only when the rename is impossible. Never work around an `@EntityGraph` limit with a `@Column(insertable = false, updatable = false)` read-only duplicate mapping (REP-14).
+**`@EntityGraph` exception** (justified in KDoc): a Java/Kotlin reserved-word property — QueryDSL kapt silently skips the Q-class path for it. The first resort is renaming the property or class away from the reserved word (`@Table` keeps the DB name); `@EntityGraph` + derived query applies only when the rename is impossible. Never work around an `@EntityGraph` limit with a `@Column(insertable = false, updatable = false)` read-only duplicate mapping (REP-14).
 
 Example: [REP-1 · REP-2](examples/repository.md#rep-1--rep-2--query-construction).
 
@@ -125,7 +125,7 @@ Example: [REP-5](examples/repository.md#rep-5--query-skeleton-stays-inline).
 
 - **`list`/`page`/`exists`/`count` are always separate methods** — a different return shape is never folded into one method. Only methods on the same filter axis share a `by(query)`: `listByQuery(ListOrderQuery)` and `existsByQuery(ListOrderQuery)` share one filter and one `by()`, while `pageByQuery(PageOrderQuery)` has its own axis (period, explicit id list) and its own `by()`.
 
-**Non-PK list-read clustering** — the trigger is not limited to filters on the entity's own primary key. When one entity has two or more `List<Entity>` reads filtered by non-own-PK conditions (a foreign key such as `memberId`/`orderId`, a status or type column) that are variations of each other — overlapping condition axes (`findAllByMemberIdWithItems` + `findAllByMemberIdsAndStatus`), or a with/without-fetch or extra-filter pair — collapse them into one `listByQuery(List*Query)` whose nullable fields are the union of the filters, with the superset fetch graph.
+**Non-PK list-read clustering** — the trigger is not limited to filters on the entity's own primary key. When one entity has two or more `List<Entity>` reads filtered by non-own-PK conditions (a foreign key such as `memberId`/`orderId`, a status or type column) that are variations of each other — overlapping condition axes (`findAllByMemberIdWithItems` + `findAllByMemberIdsAndStatus`), or a with/without-fetch or extra-filter pair — collapse them into one `listByQuery(List*Query)` whose nullable fields are the union of the filters, with the superset fetch graph — still at most one collection fetch join (REP-4); a further collection is batch-fetched or loaded by a separate query.
 
 - **Own-PK reads stay** — `findById`, fetch-graph variants `findByIdWith*`, and multi-PK `listByIds(ids…)`/`listByIdsWith*` are keyed on the entity's own id.
 - **An isolated single non-PK read stays derived** — one lone `findAllBy<fk>` on an entity (`OrderItemRepository.findAllByOrder`) is not method explosion. The rule fires only at two or more variation reads.
@@ -190,7 +190,7 @@ Accepted exceptions:
 
 Example: [REP-14](examples/repository.md#rep-14--entity-column-policy).
 
-**REP-15** — A reference to another entity is a `@ManyToOne` (`@ManyToOne val foo: Foo?`, read through `bar.foo?.id`), never a separate `fooId: UUID` field — whether the target is in another domain or the same one (`OrderItem.order`, not `orderId: UUID`). An id of a row another service owns (a member id when members live in another service) has no entity in this service and stays a `UUID`. [SVC-17](service.md#6-cross-domain-access) does not apply to entity imports — an entity may import other entities.
+**REP-15** — A reference to another entity is a `@ManyToOne(fetch = FetchType.LAZY)` (`@ManyToOne(fetch = FetchType.LAZY) val foo: Foo?`, read through `bar.foo?.id`), never a separate `fooId: UUID` field — whether the target is in another domain or the same one (`OrderItem.order`, not `orderId: UUID`). `fetch = FetchType.LAZY` is always written: the JPA default for `@ManyToOne` is EAGER. An id of a row another service owns (a member id when members live in another service) has no entity in this service and stays a `UUID`. [SVC-17](service.md#6-cross-domain-access) does not apply to entity imports — an entity may import other entities.
 
 **REP-16** — An enum column is `@Enumerated(EnumType.STRING)`.
 
@@ -200,9 +200,9 @@ Example: [REP-14](examples/repository.md#rep-14--entity-column-policy).
 
 **REP-19** — `Persistable<UUID>`, with a `@Transient` new flag cleared in `@PostPersist`/`@PostLoad`, only on entities saved in bulk with application-assigned ids. Without it, `save` treats an entity whose id is already set as existing and merges it with a SELECT before the INSERT; that cost matters only for bulk saves, so no other entity implements it.
 
-**REP-20** — Escape PostgreSQL keywords in `@Table(name = "\"order\"")`, and keep reserved words out of property names (`sequence`, not `order`) — a reserved word also breaks QueryDSL kapt (§2.1 exception (b)).
+**REP-20** — Escape PostgreSQL keywords in `@Table(name = "\"order\"")`, and keep reserved words out of property names (`sequence`, not `order`) — a reserved word also breaks QueryDSL kapt (the §2.1 `@EntityGraph` exception).
 
-**REP-21** — `@Entity` + `@Table`; computed values in `get()` backing-property style; `@EntityListeners` for lifecycle hooks; no Spring dependency in `entity/`. A related entity's value is delegated through a computed property instead of a duplicated column (`OrderItem.productName get() = product.name`); the related entity must be loaded (`@EntityGraph`/`fetchJoin()`) before the property is read outside a transaction, or `LazyInitializationException` fires.
+**REP-21** — `@Entity` + `@Table`; computed values in `get()` backing-property style; `@EntityListeners` for lifecycle hooks; no Spring dependency in `entity/`. A related entity's value is delegated through a computed property instead of a duplicated column (`OrderItem.productName get() = product.name`); the related entity must be loaded (`@EntityGraph`/`fetchJoin()`) before the property is read outside a transaction, or `LazyInitializationException` fires. A list read whose callers use a delegated property fetch-joins that relation; otherwise each row lazy-loads it inside the transaction — a silent N+1.
 
 **REP-34** — Keep an entity simple: a property holds a fact that cannot be derived, and a value that follows from the entity's other properties is computed in a `get()` property instead of being stored (`isDeleted` from `deletedAt`, `OrderItem.totalPrice` from `unitPrice * quantity`). A value judged against the current time is a method taking the time (`isExpiredAt(now)`), not a getter that reads the clock. Do not add a column, a `var` or a transition-method assignment for it: a stored copy can disagree with its inputs, and each new input then has to be synchronized by hand. Exceptions: a value a query must filter or sort on in the database (a getter is invisible to QueryDSL — derive it in the predicate from the stored inputs, and store it only when that predicate cannot be indexed or is too costly), and a snapshot that must stay fixed when its inputs change later (an order's price at purchase time).
 
@@ -212,7 +212,7 @@ Example: [REP-21 · REP-34](examples/repository.md#rep-21--rep-34--entity-layer-
 
 *If the project uses PostgreSQL JSONB.*
 
-**REP-22** — A JSONB column carries both `@JdbcTypeCode(SqlTypes.JSON)` and `@Column(columnDefinition = "jsonb")`. Missing either breaks Hibernate's JSONB serialization — silent on read, cryptic errors on write.
+**REP-22** — A JSONB column carries both `@JdbcTypeCode(SqlTypes.JSON)` and `@Column(columnDefinition = "jsonb")`. `@JdbcTypeCode` drives the JSON serialization, and with the PostgreSQL dialect it alone maps to `jsonb`; `columnDefinition = "jsonb"` makes the column type explicit for schema generation and validation and for readers.
 
 **REP-23** — JSONB queries go through one shared JSONB query util: a `.jsonbField(vararg keys)` extension extracts the value as text, then `.containsIgnoreCase()`, `.eq(...)`. There is no numeric cast — a JSONB value compares and sorts as text. Sorting passes the `Sort` to the shared `Sort` → `OrderSpecifier` transformer (`OrderSpecifierTransformer(entityPath).transform(sort)`); a property whose first segment is a JSONB map field (`metadata.priority`) orders by that key's text value, so numbers sort lexicographically (`"10"` before `"9"`). There is no per-field cast or field allow-list.
 
@@ -262,6 +262,6 @@ Rolling a `@RedisHash` entity's TTL forward uses `EXPIRE`, never `save`: `save` 
 
 ## 11. Migrations
 
-**REP-32** — A committed or deployed `db/migration/V*.sql` is never edited, in content or filename: a change alters the Flyway checksum and `ddl-auto=validate` (dev/prod) fails at boot. Schema evolves through a new versioned migration — a rename too is a new `V*` with `ALTER TABLE … RENAME`. A migration not yet applied anywhere (uncommitted or undeployed) may still be edited or renumbered before merge. One feature's schema change is one migration file: it is not split into `V5`/`V6` per sub-task, and while it is unmerged each sub-task's change folds into the feature's file.
+**REP-32** — A `db/migration/V*.sql` may be edited or renumbered until it is merged to the shared branch; after that it is immutable, in content and filename — teammates' local databases and CI may already have applied it, and an edit alters its Flyway checksum (a rename leaves the applied version unresolved), so Flyway's validate-on-migrate fails at boot (`FlywayValidateException`). Schema evolves through a new versioned migration — a rename too is a new `V*` with `ALTER TABLE … RENAME`. One feature's schema change is one migration file: it is not split into `V5`/`V6` per sub-task, and while it is unmerged each sub-task's change folds into the feature's file.
 
-**REP-33** — A new unique constraint is named `uq_<table>_<columns>` (`uq_order_item_order_id_product_id`). Constraints in applied migrations keep their names (REP-32).
+**REP-33** — A new unique constraint is named `uq_<table>_<columns>` (`uq_order_item_order_id_product_id`). Constraints in merged migrations keep their names (REP-32).

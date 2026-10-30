@@ -97,7 +97,7 @@ class OrderService(private val orderRepository: OrderRepository, ...) { ... }   
 Two-stage `saveAll` when the batch has an FK dependency:
 
 ```kotlin
-// ❌ loop save — N elements become 2N round trips, and Hibernate's JDBC batch never engages
+// ❌ loop save — the batch reads as per-row work; JDBC batching comes from hibernate.jdbc.batch_size, order_inserts and non-IDENTITY ids, not from saveAll
 command.orders.forEach { row ->
     val order = orderRepository.save(newOrder(row))
     orderItemRepository.save(OrderItem(order, ...))
@@ -252,15 +252,15 @@ class OrderService(...) : Logger() {
 @Service @Transactional(readOnly = true) class OrderService(...)
 ```
 
-Boundary API — `inTx` carries the block's own type through, so no call site needs a guard:
+Boundary API — every boundary goes through `TransactionRunner`:
 
 ```kotlin
 // ❌ hand-rolled REQUIRES_NEW with no reason to exist
 private val tx = TransactionTemplate(requireNotNull(transactionTemplate.transactionManager) { "..." })
     .apply { propagationBehavior = PROPAGATION_REQUIRES_NEW }
-// ❌ readOnly hidden in a field + execute's T? defended by requireNotNull
+// ❌ readOnly hidden in a field of the raw template, around a pure read (TX-5, TX-6)
 private val readTransactionTemplate = transactionTemplate.asReadOnly()
-val page = requireNotNull(readTransactionTemplate.execute { ... }) { "... returned no result" }
+val page = readTransactionTemplate.execute { ... }
 // ✅
 transactionRunner.inTx { ... }
 ```
@@ -280,14 +280,16 @@ fun placeOrder(command: CreateOrderCommand): PlaceOrderResult {
 
 // ✅ Good — each DB step commits immediately under its own @Transactional; the external call is outside the transaction
 fun placeOrder(command: CreateOrderCommand): PlaceOrderResult {
-    val order = orderService.createOrder(command)        // commits under its own @Transactional (lock released)
+    val order = orderService.createOrder(command)        // commits as PAYMENT_PENDING under its own @Transactional (lock released)
     val payment = try {
-        paymentClient.charge(order.id)                   // outside the transaction — the payment system can access the row freely
-    } catch (e: Throwable) {
+        paymentClient.charge(orderId = order.id, idempotencyKey = order.id)   // outside the transaction; the key stops a retry or reconciliation from charging twice
+    } catch (e: PaymentDeclinedException) {              // definite failure — the ErrorDecoder mapped the remote 4xx (CTL-26)
         safeDeleteOrder(order.id, command.memberId)      // explicit compensation
         throw e
-    }
-    return PlaceOrderResult.from(order, payment)
+    }                                                    // a timeout, reset or 5xx is an unknown outcome: it propagates, and the order stays PAYMENT_PENDING for reconciliation
+    val paidOrder = orderService.completePayment(CompletePaymentCommand(orderId = order.id, paymentId = payment.id))
+
+    return PlaceOrderResult.from(order = paidOrder, payment = payment)
 }
 
 private fun safeDeleteOrder(orderId: UUID, memberId: UUID) {

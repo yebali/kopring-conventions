@@ -69,7 +69,7 @@ A rule marked *"If the project uses X"* applies only when it does.
 
 1. The project's own instructions (`CLAUDE.md`, `AGENTS.md`, `docs/`) override this skill.
 2. This skill overrides general-purpose skills such as ponytail and superpowers. Conflicts are settled in the External skill precedence section of [code-style.md](references/code-style.md).
-3. Building blocks shown as snippets have a default shape: logger base class, `withRetry`, `TransactionRunner`, `ErrorCode`/`BusinessException`, `translateUniqueViolation`, `PaginationResponse`. If the project already has its own equivalent, use it.
+3. Building blocks shown as snippets have a default shape: logger base class, `RetryTemplate` usage, `TransactionRunner`, `ErrorCode`/`BusinessException`, `translateUniqueViolation`, `PaginationResponse`. If the project already has its own equivalent, use it.
 
 ## Checking code
 

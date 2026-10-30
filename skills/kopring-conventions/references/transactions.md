@@ -9,7 +9,7 @@
 | TX-1 | | `@Transactional` is method-level: `readOnly` for reads, plain for writes, none for stateless or call-interleaving methods | [§2](#2-transaction-boundaries) |
 | TX-2 | | No variable or long-running external call inside a transaction (listed exceptions) | [§3](#3-external-calls-and-compensation) |
 | TX-3 | | Pass the upper gate ([STY-27](code-style.md#10-prefer-the-plain-option)) first, then take the first of options 1–3 that fits | [§3](#3-external-calls-and-compensation) |
-| TX-4 | | Compensation runs in `runCatching`, in reverse creation order, through the owning domain's methods, and cleans non-transactional side effects | [§3](#3-external-calls-and-compensation) |
+| TX-4 | | Compensate only a definite remote failure (an unknown outcome is marked pending and reconciled), in `runCatching`, in reverse creation order, through the owning domain's methods, cleaning non-transactional side effects; a state-changing call sends an idempotency key | [§3](#3-external-calls-and-compensation) |
 | TX-5 | | Open boundaries with `TransactionRunner.inTx`/`inNewTx`; inject a raw `TransactionTemplate` only to reach `TransactionStatus` | [§3](#3-external-calls-and-compensation) |
 | TX-6 | | Open a boundary only for the listed needs; never a read-only boundary around a pure read | [§3](#3-external-calls-and-compensation) |
 | TX-7 | | `inNewTx` only for a write that must commit on its own, never as a precaution | [§3](#3-external-calls-and-compensation) |
@@ -33,8 +33,8 @@ Repository implementations carry no `@Transactional` ([REP-4](repository.md#2-qu
 Allowed:
 
 - a short status check (≤ ~100ms) over HTTP — token refresh, health probe;
-- an external call inside `@TransactionalEventListener(AFTER_COMMIT)` — already past commit, no lock held;
-- **an external fire-and-forget call that waits for no ack, even from a listener running eagerly inside the transaction** (a broker publish that returns without awaiting the ack) — the criterion is *blocking*, not transaction phase. This covers external side effects that must survive a rollback and therefore cannot use AFTER_COMMIT; a DB write in that position uses `inNewTx` instead (TX-7). **Do not reach for `AFTER_COMPLETION`/`AFTER_ROLLBACK` to buy this exemption** — on the rollback path `triggerAfterCompletion()` runs *before* `cleanupAfterCompletion()` (the reverse of the commit path), so the connection is still held while the listener runs. The only fix in that situation is making the call itself asynchronous.
+- a short external call with an explicitly configured client timeout inside `@TransactionalEventListener(AFTER_COMMIT)` — past commit, so the row locks are released, but the listener runs in the committing thread's `afterCompletion` callback, before `cleanupAfterCompletion`, so the pooled connection (Hibernate's `DELAYED_ACQUISITION_AND_HOLD`) and the persistence context are still held. A slow or unbounded external call from an `AFTER_COMMIT` listener is handed to a Spring-managed executor ([STY-43](code-style.md#14-threads-retries-and-lifecycle)) — an explicit exception to the no-`@Async`/executor default of [STY-27](code-style.md#10-prefer-the-plain-option);
+- **an external fire-and-forget call that waits for no ack, even from a listener running eagerly inside the transaction** (a broker publish that returns without awaiting the ack) — the criterion is *blocking*, not transaction phase. A broker client's send can still block: `KafkaTemplate.send` waits up to `max.block.ms` (60 s by default) when metadata is unavailable or the buffer is full, so this exemption requires a bounded `max.block.ms`. This covers external side effects that must survive a rollback and therefore cannot use AFTER_COMMIT; a DB write in that position uses `inNewTx` instead (TX-7). **Do not reach for `AFTER_COMPLETION`/`AFTER_ROLLBACK` to buy this exemption** — they run in the same `afterCompletion` callback as `AFTER_COMMIT`, before `cleanupAfterCompletion`, so they hold the same connection. The only fix in that situation is making the call itself asynchronous.
 
 **TX-3** — When a method needs an external call and a DB write, try these in order and stop at the first that fits:
 
@@ -46,9 +46,9 @@ Allowed:
 3. **A programmatic boundary (`transactionRunner.inTx { }`, TX-5)** — when no collaborator owns the write (the persist step is private to this service), **or when several collaborator writes of the same domain must commit as one unit** (each is `@Transactional` on its own, so without an enclosing boundary a partial run leaves inconsistent state — e.g. a user row and its profile row written by two user-domain collaborators). A write in another domain that must commit with this one is not a collaborator call: publish an event that domain handles in a synchronous `@EventListener`, which joins the enclosing boundary ([SVC-40](service.md#11-spring-events)).
    **The block's return value carries what the post-commit step needs.** Read it inside the boundary (it needs the loaded entities), hand it out, and use it after — `inTx { …; existingFiles.map { it.path } }` then `deleteStoredFiles(paths = filePaths, …)`. The whole flow stays in one method and reading order matches execution order: inside the block is what commits, outside is the external call.
 
-**TX-4** — Compensation (options 1 and 3) wraps each compensating call in `runCatching`, so a failed compensation is logged, never rethrown, and cannot mask the original exception. Compensations run in **reverse creation order** and reuse the owning domain's existing `delete*`/`unlink*` Service methods ([SVC-17](service.md#6-cross-domain-access)). Non-transactional side effects — files on disk, external-system state — are cleaned up explicitly in the same catch block, since no rollback covers them.
+**TX-4** — Compensation (options 1 and 3) runs only on a definite failure: the remote reported a business failure (a 4xx). A timeout, connection reset or 5xx is an unknown outcome — the remote change may have happened — so the local record is marked pending and reconciled, never deleted. Each compensating call is wrapped in `runCatching`, so a failed compensation is logged, never rethrown, and cannot mask the original exception. Compensations run in **reverse creation order** and reuse the owning domain's existing `delete*`/`unlink*` Service methods ([SVC-17](service.md#6-cross-domain-access)). Non-transactional side effects — files on disk, external-system state — are cleaned up explicitly in the same catch block, since no rollback covers them. A state-changing outbound call sends an idempotency key derived from the local id (`order.id`), so a retry or the reconciliation cannot apply it twice.
 
-**TX-5** — Production code opens a boundary by injecting `TransactionRunner` (one shared, component-scanned bean) as `private val transactionRunner: TransactionRunner`, the **last constructor parameter**, and wrapping each DB step in `transactionRunner.inTx { }`. Do NOT inject the raw `TransactionTemplate`: that reopens the two things the wrapper closes — `execute`/`executeWithoutResult` called directly (a hard `T?` under `-Xjsr305=strict`, forcing every non-null call site to unwrap it with a meaningless message) and `isReadOnly` mutated on the shared singleton. The runner exposes `inTx { }` (`REQUIRED`) and `inNewTx { }` (`REQUIRES_NEW`, TX-7) and no read-only variant, because TX-6 rules out a boundary around a pure read. `src/test` fixtures may keep `@Autowired transactionTemplate.execute { … }` for setup and teardown.
+**TX-5** — Production code opens a boundary by injecting `TransactionRunner` (one shared, component-scanned bean) as `private val transactionRunner: TransactionRunner`, the **last constructor parameter**, and wrapping each DB step in `transactionRunner.inTx { }`. Do NOT inject the raw `TransactionTemplate`: that reopens what the wrapper closes — `isReadOnly` mutated on the shared singleton. The runner exposes `inTx { }` (`REQUIRED`) and `inNewTx { }` (`REQUIRES_NEW`, TX-7) and no read-only variant, because TX-6 rules out a boundary around a pure read. `src/test` fixtures may keep `@Autowired transactionTemplate.execute { … }` for setup and teardown.
 
 The default shape; a project may already have its own equivalent — use that:
 
@@ -60,19 +60,12 @@ class TransactionRunner(private val provider: ObjectProvider<TransactionTemplate
             .apply { propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW }
     }
 
-    fun <T> inTx(block: () -> T): T = run(template = template(), block = block)
+    fun <T> inTx(block: () -> T): T = template().execute { block() }
 
-    fun <T> inNewTx(block: () -> T): T = run(template = requiresNewTemplate, block = block)
+    fun <T> inNewTx(block: () -> T): T = requiresNewTemplate.execute { block() }
 
     private fun template(): TransactionTemplate =
         checkNotNull(provider.getIfAvailable()) { "No TransactionTemplate available" }
-
-    private fun <T> run(template: TransactionTemplate, block: () -> T): T {
-        val result = AtomicReference<T>()
-        template.executeWithoutResult { result.set(block()) }
-
-        return result.get()
-    }
 }
 ```
 
@@ -82,7 +75,7 @@ class TransactionRunner(private val provider: ObjectProvider<TransactionTemplate
 | A write that must commit on its own (TX-7) — `REQUIRES_NEW`, a second connection while an outer transaction is open | `transactionRunner.inNewTx { … }` |
 | Needs `TransactionStatus` (`setRollbackOnly`) | Inject `TransactionTemplate` in that one class and call `execute { status -> … }` — rare, make it explicit |
 
-`TransactionRunner` is a bean, so each boundary binds to the Spring context that owns the repositories ([test infrastructure](testing.md#2-test-infrastructure)).
+`TransactionRunner` is a bean, so each boundary binds to the Spring context that owns the repositories.
 
 **TX-6** — Open a boundary with `inTx { }` if, and only if, one of the rows below holds. Otherwise call the repository directly: with `open-in-view: false` a bare repository call acquires and releases its connection per query, and PostgreSQL's default READ COMMITTED gives each statement a fresh snapshot anyway, so wrapping plain reads buys a consistent snapshot only under REPEATABLE READ — that is, nothing.
 

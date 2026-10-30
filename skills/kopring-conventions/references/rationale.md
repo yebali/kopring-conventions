@@ -77,7 +77,7 @@ A deliberate simplification has a ceiling — a global lock, a full scan, a naiv
 
 ### STY-29 Time zones and timestamps
 
-With `timestamptz` columns, `ZonedDateTime.now()` stores the same instant whatever the JVM zone is — the type is not the risk. The zone matters where a wall-clock value is derived: containers often run in UTC while developer machines run in a local zone, so "today", a numbering year, or a cron firing at 04:00 differ between the two. The application time zone fixes every date boundary and time-of-day schedule, and `ZoneId.systemDefault()` is forbidden because it silently follows the host. `equals` compares zones as well as instants; `isEqual` compares the instant. `Instant` stays allowed where an API demands it (Spring `Trigger`) and for in-memory arithmetic.
+With `timestamptz` columns, `ZonedDateTime.now()` stores the same instant whatever the JVM zone is — the type is not the risk. The zone matters where a wall-clock value is derived: containers often run in UTC while developer machines run in a local zone, so "today", a numbering year, or a cron firing at 04:00 differ between the two. The application time zone fixes every date boundary and time-of-day schedule, and `ZoneId.systemDefault()` is forbidden because it silently follows the host. `equals` compares zones as well as instants, and `compareTo`, `<` and ordering functions break a tie between equal instants by local date-time and zone; `isBefore`/`isAfter`/`isEqual` and `toInstant()` compare the instant alone. `Instant` stays allowed where an API demands it (Spring `Trigger`) and for in-memory arithmetic.
 
 ### STY-33 Durations as Duration
 
@@ -95,7 +95,7 @@ A failure that is absorbed must still be visible, and only failures whose conseq
 
 ### STY-43 Threads and lifecycle
 
-Executors from `Executors.new*` inside a bean are invisible to Spring's shutdown, so in-flight work is cut off on redeploy; an unbounded thread-per-task helper turns a burst into thousands of threads. Hand-written retry loops each get their own backoff behavior; one helper (STY-45) keeps it uniform. Starting long-running work on `ApplicationReadyEvent` instead of `@PostConstruct` guarantees every bean it calls is ready, and one stop hook keeps shutdown in one place.
+Executors from `Executors.new*` inside a bean are invisible to Spring's shutdown, so in-flight work is cut off on redeploy; an unbounded thread-per-task helper turns a burst into thousands of threads. Hand-written retry loops each get their own backoff behavior and their own idea of what is safe to repeat; one shared mechanism with a required retry predicate (STY-45) keeps both uniform. Starting long-running work on `ApplicationReadyEvent` instead of `@PostConstruct` guarantees every bean it calls is ready, and one stop hook keeps shutdown in one place.
 
 ### STY-47 Files and streams
 
@@ -248,7 +248,7 @@ External systems evolve independently, so a code the enum does not know arrives 
 
 ### SVC-33 Event payloads
 
-An entity in an event read by an `AFTER_COMMIT` or asynchronous listener is detached by the time the listener runs, so a lazy association fails or reads stale state; an authentication object drags auth state into code that only needs the actor id. A synchronous listener would see a live entity, but it would then depend on the publishing domain's entity structure, which undoes the separation the event exists for. Carrying the data listeners need, rather than ids alone, keeps a listener from calling the publisher's Service back — an injection in the reverse direction.
+The persistence context is still open while an `AFTER_COMMIT` listener runs inline, but a listener may run later or elsewhere — on an executor thread, or in a different transaction — so an entity carried across that boundary brings a lazy association that fails or state that is stale; an authentication object drags auth state into code that only needs the actor id. A synchronous listener would see a live entity, but it would then depend on the publishing domain's entity structure, which undoes the separation the event exists for. Carrying the data listeners need, rather than ids alone, keeps a listener from calling the publisher's Service back — an injection in the reverse direction.
 
 ### STY-34 Entity change logging
 

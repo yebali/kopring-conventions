@@ -98,7 +98,14 @@ class OrderServiceTest : SpringBootTestSupport() {
 class CustomOrderRepositoryImplTest : SpringBootTestSupport() {
     @Test
     fun `memberId 에 속한 모든 주문을 삭제한다`() {
+        val member = saveMember()
+        val order = saveOrder(member = member)
+
         orderRepository.deleteAllByMemberId(member.id)
+        entityManager.flush()
+        entityManager.clear()                            // bulk DML left the loaded order stale (TST-23)
+
+        assertThat(orderRepository.findByIdOrNull(order.id)).isNull()
     }
 }
 

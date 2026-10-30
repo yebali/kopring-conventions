@@ -92,7 +92,7 @@ g "$REPO_IMPL" "@(Repository|Component)$ANNOT_END" | fmt '[REP-3] stereotype on 
 g "$REPO_IMPL" "@Transactional$ANNOT_END"          | fmt '[REP-4] @Transactional on Custom*RepositoryImpl forbidden — transaction boundary belongs to the calling Service'
 
 g "$TEST" '@DisplayName'                  | fmt '[TST-6] @DisplayName forbidden — the Korean backtick method name carries the description'
-g "$TEST" '(^|[^.A-Za-z])assert\('        | fmt '[TST-21] stdlib assert() is a JVM-flag no-op — use AssertJ'
+g "$TEST" '(^|[^.A-Za-z])assert\('        | fmt '[TST-21] stdlib assert() forbidden — AssertJ assertThat shows actual vs expected'
 
 total=$(wc -l < "$OUT" | tr -d ' ')
 [ -s "$OUT" ] && sort -t: -k1,1 -k2,2n "$OUT"

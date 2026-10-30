@@ -36,7 +36,7 @@
 | STY-29 | | Persisted and DTO timestamps are `ZonedDateTime`; `Instant` only for framework APIs and in-memory arithmetic | [§11](#11-time-and-durations) |
 | STY-30 | | Date boundaries (today, year, month) use the application time zone; never `ZoneId.systemDefault()` | [§11](#11-time-and-durations) |
 | STY-31 | | A time-of-day `@Scheduled(cron)` declares `zone` as the application time zone | [§11](#11-time-and-durations) |
-| STY-32 | | Compare `ZonedDateTime` with `isEqual`/`toInstant`, never `equals` | [§11](#11-time-and-durations) |
+| STY-32 | | Compare and order `ZonedDateTime` through `isBefore`/`isAfter`/`isEqual` or `toInstant()`, never `equals`/`<`/`compareTo` | [§11](#11-time-and-durations) |
 | STY-33 | | Durations in code are `java.time.Duration`, never a number with a unit suffix | [§11](#11-time-and-durations) |
 | STY-34 | | An entity state-change method logs the fields it assigns at INFO, `id` first | [§12](#12-logging) |
 | STY-35 | | Application logs read `{Subject} {action}: key=value, …` at the level §12 assigns; every operation leaves an INFO line with its result, and a line repeated inside one operation is DEBUG | [§12](#12-logging) |
@@ -49,7 +49,7 @@
 | STY-42 | | A failed remote lookup degrades to empty only for display enrichment, and its KDoc says so | [§13](#13-failure-handling) |
 | STY-43 | | No `Executors.new*` or unbounded thread-per-task inside a bean; run background work on a Spring-managed executor | [§14](#14-threads-retries-and-lifecycle) |
 | STY-44 | | `runBlocking` only at the boundary to a blocking API | [§14](#14-threads-retries-and-lifecycle) |
-| STY-45 | | Retry through one shared helper (e.g. `withRetry`), never a hand-written loop | [§14](#14-threads-retries-and-lifecycle) |
+| STY-45 | | Retry only transient, repeat-safe failures, through one shared mechanism (`RetryTemplate` or the project's helper); never a hand-written loop | [§14](#14-threads-retries-and-lifecycle) |
 | STY-46 | | Long-running work starts on `ApplicationReadyEvent` and stops in `@PreDestroy` | [§14](#14-threads-retries-and-lifecycle) |
 | STY-47 | | File system code uses `java.nio.file.Path`/`Files` and `Path.of`; `java.io.File` only where an API requires it | [§15](#15-files-and-streams) |
 | STY-48 | | Whoever opens a stream closes it; no open stream inside a Command or Result | [§15](#15-files-and-streams) |
@@ -70,7 +70,7 @@ Kotlin, Spring Boot and a Gradle (multi-module) build. `./gradlew ktlintFormat` 
 
 | ID | Item | Rule |
 |---|---|---|
-| **STY-1** | Logging | Log through the project's single logger idiom; never `LoggerFactory.getLogger(…)` or a per-class `KotlinLogging.logger`. The default idiom is the `Logger` base class below — a project may already have its own equivalent; use that. Sole exception: a `@RestControllerAdvice` extending Spring's `ResponseEntityExceptionHandler`, whose parent already defines a clashing `logger` property, uses a file-level `KotlinLogging.logger {}`. [Example](examples/code-style.md#sty-1--logger-base-class) |
+| **STY-1** | Logging | Log through the project's single logger idiom; never `LoggerFactory.getLogger(…)` or a per-class `KotlinLogging.logger`. The default idiom is the `Logger` base class below — a project may already have its own equivalent; use that. Sole exception: a class whose supertype declares a `logger` member (`ResponseEntityExceptionHandler`, `OncePerRequestFilter`, …) uses a file-level `private val log = KotlinLogging.logger {}`. An inherited member wins over a companion-object member, so in such a class `companion object : Logger()` is shadowed and `logger.info { … }` compiles as commons-logging `Log.info(Object)`, logging the lambda object; a file-level `logger` is shadowed the same way, hence `log`. [Example](examples/code-style.md#sty-1--logger-base-class) |
 | **STY-2** | Imports | Always `import`; never inline a fully qualified name (`com.example.…`) in code or tests |
 | **STY-3** | Functions | Expression body for simple functions |
 | **STY-4** | Dependency injection | Constructor injection only |
@@ -81,10 +81,10 @@ The default logger base class (kotlin-logging):
 
 ```kotlin
 abstract class Logger {
-    val logger by lazy { KotlinLogging.logger(this::class.java.name) }
+    val logger by lazy { KotlinLogging.logger(this::class.java.name.removeSuffix("\$Companion")) }
 }
 // class OrderService(...) : Logger()      — a bean
-// companion object : Logger()             — a class that already extends something else
+// companion object : Logger()             — a class that already extends something else (no inherited `logger`)
 ```
 
 Timestamps follow [§11](#11-time-and-durations). An optional `@RequestParam` follows [CTL-3](controller.md#2-endpoint-signatures).
@@ -101,7 +101,7 @@ Timestamps follow [§11](#11-time-and-durations). An optional `@RequestParam` fo
 
 ✅ `list.filterIsInstance<Order>()` · `readValue(s, object : TypeReference<Map<String, Any>>() {})` — ❌ `@Suppress("UNCHECKED_CAST") … as List<Order>`. [Example](examples/code-style.md#sty-8--unchecked-cast)
 
-**STY-9** — A single-expression trailing lambda stays on one line. The short message lambda of `require`/`check`/`requireNotNull` always goes on one line with its receiver and arguments; this assumes ktlint's `max_line_length` is off (no `.editorconfig` sets it), so length is never a reason to wrap it. Any other single-expression trailing lambda (`let`, `map`, `runCatching`, …) goes on one line when the merged line, indentation included, is at most 120 characters; beyond that it stays on three lines. The 120-character cap limits merging — it does not require splitting an existing one-line lambda that is already longer. Exception for both: when the argument (receiver expression) is itself multi-line, leave it — the wrap comes from the argument, not the lambda.
+**STY-9** — A single-expression trailing lambda stays on one line. The short message lambda of `require`/`check`/`requireNotNull` always goes on one line with its receiver and arguments; this assumes the project disables ktlint's line-length check (`.editorconfig`: `ktlint_standard_max-line-length = disabled` or `max_line_length = off`; left unset, ktlint 1.x's default `ktlint_official` style caps lines at 140), so length is never a reason to wrap it. Any other single-expression trailing lambda (`let`, `map`, `runCatching`, …) goes on one line when the merged line, indentation included, is at most 120 characters; beyond that it stays on three lines. The 120-character cap limits merging — it does not require splitting an existing one-line lambda that is already longer. Exception for both: when the argument (receiver expression) is itself multi-line, leave it — the wrap comes from the argument, not the lambda.
 
 ✅ `requireNotNull(x) { "msg" }` — ❌ splitting `{` body `}` across three lines. [Example](examples/code-style.md#sty-9--single-expression-trailing-lambda)
 
@@ -347,7 +347,7 @@ Both rules are review judgments, not machine-detectable.
 
 **STY-31** — A time-of-day cron — an `@Scheduled(cron = …)` that fires at a wall-clock time — declares the application time zone: `@Scheduled(cron = "0 0 3 * * *", zone = "\${app.time-zone}")`.
 
-**STY-32** — Compare `ZonedDateTime` values with `isEqual` or through `toInstant()`, never `equals` or `==`: `equals` also compares the zone, so one instant in two zones is unequal.
+**STY-32** — Compare and order `ZonedDateTime` values through `isBefore`/`isAfter`/`isEqual` or `toInstant()`, never `equals`/`==` or the comparison operators and ordering functions on the raw value (`<`, `<=`, `compareTo`, `maxOf`, `sortedBy`): `equals` also compares the zone, and `compareTo` breaks a tie between equal instants by local date-time and zone, so one instant in two zones is unequal (`09:00+09:00` vs `00:00Z`: `isEqual` is true, `a <= b` is false).
 
 **STY-33** — A duration in code is a `java.time.Duration`: `Duration.ofSeconds(30)`, not `const val X_SECONDS = 30L` multiplied by `1000L` at the use site.
 
@@ -436,15 +436,19 @@ Profiles: the base logging config sets `root: WARN` and the application's base p
 
 **STY-44** — `runBlocking` appears only at the bridge between blocking code and a coroutine API (e.g. gRPC stub calls).
 
-**STY-45** — A retry goes through one shared helper, never a hand-written retry loop. The default shape is a `withRetry` util in the shared module — a project may already have its own equivalent; use that:
+**STY-45** — A retry goes through one shared mechanism — Spring's `RetryTemplate` (`org.springframework.core.retry`) or `@Retryable` by default, or the project's existing helper such as `withRetry` — never a hand-written retry loop. The retry predicate is required: retry only failures that are transient and safe to repeat — never a 4xx, a validation failure, or a non-idempotent call without an idempotency key. A `RetryPolicy` or `@Retryable` without `includes`/`predicate` retries every exception, and a helper takes the predicate without a default (never `isRetryable = { true }`).
 
 ```kotlin
-inline fun <T> withRetry(
-    delays: Iterable<Duration> = DEFAULT_RETRY_DELAYS,
-    isRetryable: (Exception) -> Boolean = { true },
-    onRetry: (attempt: Int, cause: Exception) -> Unit = { _, _ -> },
-    block: () -> T,
-): T
+private val retryTemplate = RetryTemplate(
+    RetryPolicy.builder()
+        .maxRetries(3)
+        .delay(Duration.ofMillis(200))
+        .multiplier(2.0)
+        .includes(ResourceAccessException::class.java)
+        .build(),
+)
+
+retryTemplate.execute { paymentClient.getPayment(paymentId) }
 ```
 
 **STY-46** — Long-running work — a consumer, a socket, a scheduler of its own — starts on `ApplicationReadyEvent` and stops in `@PreDestroy`.
@@ -453,7 +457,7 @@ inline fun <T> withRetry(
 
 ## 15. Files and streams
 
-**STY-47** — File system code uses `java.nio.file.Path`, `Files` and `Path.of`. `java.io.File` appears only where an API takes one (`MultipartFile.transferTo(File)`).
+**STY-47** — File system code uses `java.nio.file.Path`, `Files` and `Path.of`. `java.io.File` appears only where an API takes one and offers no `Path` form (`ProcessBuilder.directory(File)`); `MultipartFile` uses `transferTo(path)`.
 
 **STY-48** — Whoever opens a stream closes it (`use {}`). A Command or Result never carries an open stream; return a `Path`, or a writer the controller drives.
 

@@ -38,7 +38,7 @@
 | SVC-30 | | `@Service` only for a transactional domain use-case entry point; other beans are `@Component` with a role suffix | [§10](#10-service-vs-component) |
 | SVC-31 | | Drop a bean's suffix and keep it only if what remains is not a usable name | [§10](#10-service-vs-component) |
 | SVC-33 | | An event carries ids plus the data its listeners need; never an entity, an `@Embeddable`, an entity-inner enum or the authenticated principal object | [§11](#11-spring-events) |
-| SVC-34 | | Every `@TransactionalEventListener` sets `fallbackExecution = true` | [§11](#11-spring-events) |
+| SVC-34 | | An `AFTER_COMMIT`/`BEFORE_COMMIT` `@TransactionalEventListener` sets `fallbackExecution = true`; an `AFTER_ROLLBACK`/`AFTER_COMPLETION` one never does | [§11](#11-spring-events) |
 | SVC-35 | | Listener methods are `on{Event}`; the publisher field is `applicationEventPublisher` | [§11](#11-spring-events) |
 | SVC-37 | | A failed message is redelivered up to the maximum attempts, then dead-lettered; a periodic snapshot may be acked and dropped | [§12](#12-message-consumers) |
 | SVC-38 | | Between deployables a call the caller waits on is an HTTP client call and a state change the caller does not wait for is a `*Message` over the message broker; domains inside one deployable follow SVC-39 | [§6](#6-cross-domain-access) |
@@ -293,7 +293,7 @@ Example: [SVC-20](examples/service.md#svc-20--breaking-a-bean-cycle-without-lazy
 
 ## 8. Writes, duplicates and idempotency
 
-**SVC-23** — Persist a collection with one `saveAll`, never `save()` in a loop. An FK parent→child batch is two `saveAll` stages. A loop is correct only when each element needs its own transaction, compensation or external call. ❌ `items.forEach { repo.save(it) }` ✅ `repo.saveAll(items)`. Example: [SVC-23](examples/service.md#svc-23--two-stage-saveall).
+**SVC-23** — Persist a collection with one `saveAll`, never `save()` in a loop. `SimpleJpaRepository.saveAll` is itself a loop over `save`, so the rule is about intent and readability: one call says the collection is persisted as a batch. JDBC batching needs `hibernate.jdbc.batch_size`, `hibernate.order_inserts`/`order_updates` and non-`IDENTITY` ids; with those unset, `saveAll` also makes N round trips. An FK parent→child batch is two `saveAll` stages. A loop is correct only when each element needs its own transaction, compensation or external call. ❌ `items.forEach { repo.save(it) }` ✅ `repo.saveAll(items)`. Example: [SVC-23](examples/service.md#svc-23--two-stage-saveall).
 
 **SVC-24** — An insert guarded by a DB UNIQUE constraint runs inside `translateUniqueViolation` (one shared helper), which turns a violation of the named constraint into the domain's 409 exception. The constraint name is a `companion object` constant of the entity (`OrderItem.UNIQUE_ORDER_PRODUCT`; naming per [REP-33](repository.md)), and the block flushes (`saveAndFlush`, `saveAllAndFlush`, `flush()`) so the violation surfaces inside it. A pre-check (`exists*`) may run first to answer the common case with a clean message, but it never replaces the translation: concurrent requests pass the pre-check together.
 
@@ -400,7 +400,7 @@ An in-process event carries a state change from one domain to the domains it aff
 | Must commit and roll back with the publisher | Synchronous `@EventListener` | At `publishEvent`, inside the publisher's transaction | The publisher rolls back too |
 | May run once the publisher's write is durable | `@TransactionalEventListener(phase = AFTER_COMMIT, fallbackExecution = true)` | After the publisher commits | The publisher stays committed; only this effect is lost |
 
-An `AFTER_COMMIT` listener is only for an effect the publisher can do without when it fails — one that can be retried or reconciled later (a notification, a cache eviction, a message publish). Its DB writes run in `transactionRunner.inNewTx { }`: a `REQUIRED` boundary opened there joins the committed transaction and never commits ([TX-7](transactions.md#3-external-calls-and-compensation)). Its external calls are allowed ([TX-2](transactions.md#3-external-calls-and-compensation)).
+An `AFTER_COMMIT` listener is only for an effect the publisher can do without when it fails — one that can be retried or reconciled later (a notification, a cache eviction, a message publish). Its DB writes run in `transactionRunner.inNewTx { }`: a `REQUIRED` boundary opened there joins the committed transaction and never commits ([TX-7](transactions.md#3-external-calls-and-compensation)). It still holds the publisher's pooled connection, so only a short external call with a configured client timeout runs inline; a slow or unbounded one goes to a Spring-managed executor ([TX-2](transactions.md#3-external-calls-and-compensation)).
 
 **SVC-41** — The publishing domain owns the event class in its `<domain>/event/` package, named as a fact that already happened ([STY-53](code-style.md#18-transport-dto-suffix): ✅ `GroupCreatedEvent` ❌ `CreateBoardEvent`). The affected domain owns the listener in its own `<domain>/event/` package: a `@Component` `*Listener` ([SVC-30](#10-service-vs-component)) that turns the event into a Command and delegates to its own domain's Service, with no business logic of its own — the same thin shape as [CTL-24](controller.md#10-non-http-inbound-adapters). The dependency points one way, from the listener's domain to the event class; the publisher never learns who listens.
 
@@ -415,7 +415,7 @@ data class GroupDeletedEvent(val groupId: UUID, val actorId: UUID, val members: 
 data class GroupDeletedEvent(val group: Group)
 ```
 
-**SVC-34** — Every `@TransactionalEventListener` sets `fallbackExecution = true`. Without it, an event published outside a transaction is silently dropped: the listener never runs and nothing is logged.
+**SVC-34** — An `AFTER_COMMIT` or `BEFORE_COMMIT` `@TransactionalEventListener` sets `fallbackExecution = true`. Without it, an event published outside a transaction is silently dropped: the listener never runs and nothing is logged. An `AFTER_ROLLBACK` or `AFTER_COMPLETION` listener never sets it: for an event published outside a transaction Spring runs such a listener anyway (for `AFTER_ROLLBACK` it only logs a WARN, "fallback execution on AFTER_ROLLBACK phase"), so a compensating `AFTER_ROLLBACK` listener would undo an operation that succeeded.
 
 **SVC-35** — A listener method is named `on{EventName}` (`onOrderCanceled` for `OrderCanceledEvent`), and the field holding the publisher is `applicationEventPublisher`.
 

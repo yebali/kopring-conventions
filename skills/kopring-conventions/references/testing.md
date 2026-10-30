@@ -9,10 +9,10 @@
 | TST-1 | | Tests carry no comments except `// given`/`// when`/`// then` and tool directives | [§3](#3-test-structure) |
 | TST-2 | | Integration tests extend the module's `SpringBootTestSupport`; Testcontainers through `@ServiceConnection`, per module; no in-memory DB | [§2](#2-test-infrastructure) |
 | TST-3 | | Dependencies two or more test classes use are declared in `SpringBootTestSupport`; a single class's beans stay local | [§2](#2-test-infrastructure) |
-| TST-4 | | Context-backed modules run classes serially and scale by Gradle fork; only a pure unit test class opts in to in-JVM concurrency | [§2](#2-test-infrastructure) |
+| TST-4 | | Context-backed modules run classes serially and scale by Gradle fork; only a pure unit test class without MockK mocks opts in to in-JVM concurrency | [§2](#2-test-infrastructure) |
 | TST-5 | | Group with `@Nested` per feature; `@Nested` class names are Korean in backticks | [§3](#3-test-structure) |
 | TST-6 | | Test method names are Korean sentences in backticks; no `@DisplayName` | [§3](#3-test-structure) |
-| TST-7 | | `@BeforeEach init()`, `@AfterEach cleanup()`; a shared-double restore is `restoreSharedDoubles()` | [§3](#3-test-structure) |
+| TST-7 | | `@BeforeEach init()`, `@AfterEach cleanup()` | [§3](#3-test-structure) |
 | TST-8 | | Repository tests are class-level `@Transactional`; Service and Controller tests never are | [§3](#3-test-structure) |
 | TST-9 | | A test verifies only its layer's responsibility | [§4](#4-layer-responsibilities) |
 | TST-10 | | Plain unit tests (no Spring) for stateless utilities and for delegation, error or business-logic paths whose SUT is built directly with local `mockk()` and needs no database, transaction or wired bean | [§4.4](#44-plain-unit-tests) |
@@ -28,10 +28,10 @@
 | TST-20 | | Valid bodies use the typed `*Request`; malformed or missing-field bodies are raw JSON strings | [§8](#8-controller-tests) |
 | TST-21 | | AssertJ `assertThat`, never `assert`; enum references, not strings | [§9](#9-assertions) |
 | TST-22 | | An exception assertion checks the type; it checks the ErrorCode only when one type carries several; controller tests check `$.type` | [§9](#9-assertions) |
-| TST-23 | | Re-read a mutated entity from its repository before asserting | [§9](#9-assertions) |
+| TST-23 | | Re-read a mutated entity from its repository before asserting; in a transactional test, `flush()` and `clear()` before re-reading and after bulk DML | [§9](#9-assertions) |
 | TST-24 | | No assertion-free tests and no performance scripts in `src/test` | [§9](#9-assertions) |
 | TST-25 | | `ZonedDateTime` values are truncated to micros on creation and compared through `toInstant()` | [§9](#9-assertions) |
-| TST-26 | | Verifications and captures on shared mocks are scoped to owned data; a class restores the stubs it changed | [§10](#10-shared-mocks) |
+| TST-26 | | Verifications and captures on shared mocks are scoped to owned data | [§10](#10-shared-mocks) |
 | TST-27 | | Mocks are strict; only `relaxUnitFun = true` is allowed | [§10](#10-shared-mocks) |
 | TST-28 | | Never spy one of this service's own domain beans to force a failure | [§10](#10-shared-mocks) |
 | TST-29 | | No `Thread.sleep` to wait; Awaitility with the support's `AWAIT_TIMEOUT` | [§11](#11-time-waiting-and-files) |
@@ -51,15 +51,13 @@ Each module keeps its own `SpringBootTestSupport`, `TestcontainersConfiguration`
 
 | Declaration annotation | Targets |
 |---|---|
-| `@Autowired` | `mockMvc`, `objectMapper`, `applicationEventPublisher`, `transactionTemplate`, `stringRedisTemplate` (if Redis is used), the domain services and repositories tests share |
+| `@Autowired` | `mockMvc`, `objectMapper`, `applicationEventPublisher`, `transactionTemplate`, `entityManager`, `stringRedisTemplate` (if Redis is used), the domain services and repositories tests share |
 | `@MockkSpyBean` | Only the beans some test spies on (a file uploader, a lock template, …); other domain beans are `@Autowired` |
 | `@MockkBean` | External clients and outbound adapters: Feign clients (`paymentClient`), message publishers, mail senders |
 
 [Example](examples/testing.md#tst-3--inherited-dependencies).
 
-**TST-4** — Parallelism has two tiers. A module whose tests build a Spring context or touch a database runs classes serially inside a JVM (`junit-platform.properties` → `junit.jupiter.execution.parallel.mode.classes.default=same_thread`); its concurrency comes from Gradle forks (`maxParallelForks`, e.g. a `-PtestForks=N` property, default 1), each of which gets its own Testcontainers set, its own `@MockkBean` singletons and its own `fork-${org.gradle.test.worker}` storage paths. Inside such a module a class opts in to in-JVM concurrency with `@Execution(ExecutionMode.CONCURRENT)` only when it is a pure unit test ([TST-10](#44-plain-unit-tests)): no Spring context, no `@MockkBean`, `mockkObject` or `mockkStatic`, no database, no shared filesystem path, and no static or `object` state, so it shares nothing with another class. A module in which every class is such a pure unit test (a shared library module) sets `mode.classes.default=concurrent`. A module with a database or a mock shared across classes never sets it: inside one JVM the rows, the mock singletons and the host filesystem are shared, and the base `@AfterEach clearAllMocks()` assumes no other test class runs concurrently in the same JVM.
-
-A second Spring context in the same JVM needs no transaction-related opt-out. `inTx` is a method on the injected `TransactionRunner` bean ([TX-5](transactions.md#3-external-calls-and-compensation)), so the boundary belongs to the context that owns the repositories, and a boot-time `inTx` caller carries no test-side obligation. A second context is still a separate context cache entry with its own beans and its own `@MockkBean` singletons.
+**TST-4** — Parallelism has two tiers. A module whose tests build a Spring context or touch a database runs classes serially inside a JVM (`junit-platform.properties` → `junit.jupiter.execution.parallel.mode.classes.default=same_thread`); its concurrency comes from Gradle forks (`maxParallelForks`, e.g. a `-PtestForks=N` property, default 1), each of which gets its own Testcontainers set, its own `@MockkBean` singletons and its own `fork-${org.gradle.test.worker}` storage paths. Inside such a module a class opts in to in-JVM concurrency with `@Execution(ExecutionMode.CONCURRENT)` only when it is a pure unit test ([TST-10](#44-plain-unit-tests)) without MockK mocks: no Spring context, no `mockk()`, `@MockkBean`, `mockkObject` or `mockkStatic`, no database, no shared filesystem path, and no static or `object` state, so it shares nothing with another class. A local `mockk()` is excluded too: MockK's `clearAllMocks()` (default `currentThreadOnly = false`) clears the stubs of every mock in the JVM, so a Spring class's `@AfterEach clearAllMocks()` wipes a concurrently running class's local stubs. The opt-in needs `junit.jupiter.execution.parallel.enabled=true` in `junit-platform.properties`; without it `@Execution` does nothing. A module in which every class is such a pure unit test (a shared library module) sets `mode.classes.default=concurrent`. A module with a database or a mock shared across classes never sets it: inside one JVM the rows, the mock singletons and the host filesystem are shared, and the base `@AfterEach clearAllMocks()` assumes no other test class runs concurrently in the same JVM.
 
 ## 3. Test structure
 
@@ -69,13 +67,13 @@ A second Spring context in the same JVM needs no transaction-related opt-out. `i
 
 **TST-5** — Every test class groups its cases with `@Nested`, one inner class per domain feature (order creation, order cancellation, order retrieval). Inner class names are Korean in backticks (``inner class `주문 생성` ``), never English PascalCase.
 
-**TST-6** — Test method names are Korean sentences in backticks, following the `~하면 ~한다` / `~는 예외를 던진다` / `~할 수 있다` patterns. English identifiers inside the sentence (class and field names, enum values, HTTP verbs) stay English; only the sentence itself is Korean. ❌ `` `should return Order when orderId exists` `` → ✅ `` `orderId 가 존재하면 Order 를 반환한다` ``, `` `주문을 취소하면 상태가 CANCELED 가 된다` ``. `@DisplayName` is not used (it causes Kotlin compiler issues); a parameterized case label uses `@ParameterizedTest(name = "...")` (TST-32).
+**TST-6** — Test method names are Korean sentences in backticks, following the `~하면 ~한다` / `~는 예외를 던진다` / `~할 수 있다` patterns. English identifiers inside the sentence (class and field names, enum values, HTTP verbs) stay English; only the sentence itself is Korean. ❌ `` `should return Order when orderId exists` `` → ✅ `` `orderId 가 존재하면 Order 를 반환한다` ``, `` `주문을 취소하면 상태가 CANCELED 가 된다` ``. `@DisplayName` is not used: the backtick name already is the display name, so `@DisplayName` duplicates it and the two drift. A parameterized case label uses `@ParameterizedTest(name = "...")` (TST-32).
 
 [Example](examples/testing.md#tst-5--tst-6--nested-grouping-and-korean-names).
 
-**TST-7** — Setup is `@BeforeEach fun init()` and teardown is `@AfterEach fun cleanup()`; `cleanup()` never deletes rows (TST-12). A class that restubs a shared double restores it in `@AfterEach fun restoreSharedDoubles()` (TST-26).
+**TST-7** — Setup is `@BeforeEach fun init()` and teardown is `@AfterEach fun cleanup()`; `cleanup()` never deletes rows (TST-12).
 
-**TST-8** — Repository tests carry class-level `@Transactional`. A repository test calls the custom repository's bulk DML (`queryFactory.delete(...).execute()`) directly, and `Custom*RepositoryImpl` carries no `@Transactional` ([REP-4](repository.md#2-query-construction)), so the test class provides the boundary; without it the call fails with `TransactionRequiredException`. The boundary also gives rollback-based isolation and lets `@MapsId` parents persist. Service and Controller tests never use `@Transactional`, at class or method level: they verify the real transaction behavior.
+**TST-8** — Repository tests carry class-level `@Transactional`. A repository test calls the custom repository's bulk DML (`queryFactory.delete(...).execute()`) directly, and `Custom*RepositoryImpl` carries no `@Transactional` ([REP-4](repository.md#2-query-construction)), so the test class provides the boundary; without it the call fails with `TransactionRequiredException`. The boundary also gives rollback-based isolation and lets `@MapsId` parents persist. The same boundary keeps one persistence context for the whole test, so a re-read or an assertion after bulk DML flushes and clears it first (TST-23). Service and Controller tests never use `@Transactional`, at class or method level: they verify the real transaction behavior.
 
 [Example](examples/testing.md#tst-8--transactional-placement).
 
@@ -219,45 +217,45 @@ Controller tests send real HTTP requests through MockMvc. The caller's principal
 
 ## 9. Assertions
 
-**TST-21** — Assertions use AssertJ `assertThat(...)`, never Kotlin `assert(...)`. `assert()` is a no-op unless the JVM runs with `-ea`, which the Gradle test runner does not set, so `assert(cond) { "msg" }` never checks anything. Use `assertThat(x).isTrue()`, `assertThatCode { … }.doesNotThrowAnyException()` and the like. Assertions compare against enum references, not strings.
+**TST-21** — Assertions use AssertJ `assertThat(...)`, never Kotlin `assert(...)`. An AssertJ failure shows the actual and expected values where a bare `assert` reports only `Assertion failed`, and one assertion style keeps tests uniform. Use `assertThat(x).isTrue()`, `assertThatCode { … }.doesNotThrowAnyException()` and the like. Assertions compare against enum references, not strings.
 
 **TST-22** — An exception assertion checks the exception type (`assertThatThrownBy { … }.isInstanceOf(OrderNotFoundException::class.java)`). It also checks the ErrorCode only when one exception type carries several codes: `.extracting("errorCode").isEqualTo(ErrorCode.ORDER_ITEM_QUANTITY_INVALID)`. A controller test checks `$.type`. Exception messages are not asserted.
 
 [Example](examples/testing.md#tst-22--exception-and-errorcode-assertions).
 
-**TST-23** — A mutated entity is re-read through its repository (`repository.findById(...)`, `findByIdOrNull`) before its new state is asserted, never read back from a `save*`/`build*` helper's return value: that asserts the in-memory object, not the persisted row, and passes on a broken `update()`.
+**TST-23** — A mutated entity is re-read through its repository (`repository.findById(...)`, `findByIdOrNull`) before its new state is asserted, never read back from a `save*`/`build*` helper's return value: that asserts the in-memory object, not the persisted row, and passes on a broken `update()`. In a transactional test (TST-8) one persistence context spans the test, so `findById` returns the same managed instance without a SELECT, and a bulk DML (`queryFactory.delete(...).execute()`, `update(...).execute()`) leaves already-loaded entities stale: call `entityManager.flush()` and `entityManager.clear()` before re-reading, and after any bulk DML before asserting.
 
 **TST-24** — Every test asserts. A test that only `println`s timings, or runs an early-return guard with no `assertThat`, has no regression signal ([COV-8](test-coverage.md#7-regression-signal-check)): give it a real assertion or delete it. A "must not throw" body uses `assertThatCode { … }.doesNotThrowAnyException()` when the behavior is worth pinning. Performance-measurement scripts do not belong in `src/test`, not even as `@Disabled`; run such measurements ad hoc, outside the regression suite.
 
-**TST-25** — A `ZonedDateTime` is truncated with `.truncatedTo(ChronoUnit.MICROS)` when test data is created and compared through `.toInstant()`. Local runs (e.g. `Asia/Seoul`) and CI (`UTC`) differ in time zone, and Java keeps nanoseconds (9 digits) where PostgreSQL keeps microseconds (6 digits).
+**TST-25** — A `ZonedDateTime` is truncated with `.truncatedTo(ChronoUnit.MICROS)` when test data is created and compared through `.toInstant()`. Java keeps nanoseconds (9 digits) where PostgreSQL keeps microseconds (6 digits), so an untruncated value never equals its re-read copy; `toInstant()` keeps `equals`-based comparisons (collections, `containsExactly`) independent of the zone a value is read back in, which differs between local runs (e.g. `Asia/Seoul`) and CI (`UTC`).
 
 ```kotlin
 // ✅ truncate on create, toInstant() on compare
 val baseTime = ZonedDateTime.now().minusDays(1).truncatedTo(ChronoUnit.MICROS)
-order.update(orderedAt = baseTime)
+val order = saveOrder(orderedAt = baseTime)
 val result = orderRepository.findByIdOrNull(order.id)
 assertThat(result?.orderedAt?.toInstant()).isEqualTo(baseTime.toInstant())
 
-// ❌ direct comparison fails in CI (time zone and precision mismatch)
-assertThat(result?.orderedAt).isEqualTo(ZonedDateTime.now().minusDays(1))
+// ❌ untruncated: fails on precision, not zone (AssertJ compares ZonedDateTime by instant);
+//    PostgreSQL stores microseconds, so the re-read value lacks baseTime's nanoseconds
+val baseTime = ZonedDateTime.now().minusDays(1)
+assertThat(result?.orderedAt).isEqualTo(baseTime)
 ```
 
 ## 10. Shared mocks
 
 The Spring context is cached and shared across every test class in the module, so a `@MockkBean` or `@MockkSpyBean` is one singleton for the whole JVM.
 
-**TST-26** — `verify(exactly = n)` counts every call since the last clear, not this test's calls, so a verification on a shared mock matches only data this test created (the mock counterpart of TST-11):
+**TST-26** — springmockk clears every `@MockkBean` and `@MockkSpyBean` after each test method (`clear = MockkClear.AFTER` by default, applied by its `MockkClearTestExecutionListener`), so a stub or a recorded call never outlives its test and a class restores nothing itself. What still leaks is an asynchronous call an earlier test started that lands after the clear: an AFTER_COMMIT listener on an executor, a scheduler, a broker listener. `verify(exactly = n)` counts that call too, so a verification on a shared mock matches only data this test created (the mock counterpart of TST-11):
 
 ```kotlin
-// ❌ counts ShipOrderMessages sent by earlier classes too
+// ❌ also counts a ShipOrderMessage an earlier test's async listener published after the clear
 verify(exactly = 1) { messagePublisher.publish(any<ShipOrderMessage>()) }
 // ✅ counts only the message this test's order caused
 verify(exactly = 1) { messagePublisher.publish(match<ShipOrderMessage> { it.orderId == order.id }) }
 ```
 
 The same holds for `exactly = 0` ("no call for my data") and for captures: capture into a `mutableListOf<T>()` and pick `single { it.myKey == … }`, never a `slot<T>()` that holds whichever call came last. Never assign to a variable inside a `match {}` predicate; mockk may evaluate a matcher repeatedly and against non-matching calls. `match` and `capture` are members of the `verify {}` lambda receiver and need no import (`import io.mockk.match` does not exist).
-
-A class that stubs a shared double differently from the base default restores it itself: `@AfterEach fun restoreSharedDoubles() = clearMocks(theDoubleIStubbed)`. Listing only the class's own doubles keeps the effect local; a `throws` stub left on a shared `@MockkSpyBean` reaches every later test that touches that bean.
 
 **TST-27** — Mocks are strict: `mockk<T>()` and `@MockkBean` without relaxation. `relaxUnitFun = true` is the only relaxation allowed; `relaxed = true` is never used, on a local `mockk()` or a `@MockkBean`. A relaxed mock answers every unstubbed call with a default value, so a call the test did not expect passes silently.
 
