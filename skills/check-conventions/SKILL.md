@@ -1,6 +1,6 @@
 ---
 name: check-conventions
-description: Use when the user wants Kotlin code (production and tests) audited against the kopring-conventions rule set AND fixed — the code-versus-convention axis. It edits code: rule-decided violations are fixed directly, missing tests are written, judgment items are asked. Triggers on "convention audit", "check conventions", "fix rule violations", "@Service / @Component audit", "duplicate code review", "common method extraction review", or a request to scan a branch or the whole codebase for Kotlin Spring Boot convention violations. NOT for docs-versus-code drift, and NOT for a read-only review.
+description: "Use when the user wants Kotlin code (production and tests) audited against the kopring-conventions rule set AND fixed — the code-versus-convention axis. It edits code: rule-decided violations are fixed directly, missing tests are written, judgment items are asked. Triggers on \"convention audit\", \"check conventions\", \"fix rule violations\", \"@Service / @Component audit\", \"duplicate code review\", \"common method extraction review\", or a request to scan a branch or the whole codebase for Kotlin Spring Boot convention violations. NOT for docs-versus-code drift, and NOT for a read-only review."
 ---
 
 # Convention Check — Code ↔ Convention Drift Detection & Fix
