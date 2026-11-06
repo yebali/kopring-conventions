@@ -139,7 +139,7 @@ Even when shapes are identical, a clear responsibility boundary outweighs the co
 
 A consistent return shape, easy to extend with metadata, and a clear distinction between single- and multi-item reads.
 
-### STY-12 File and package placement
+### STY-14 File and package placement
 
 **The only judgment axis is "does it replicate the layer tree."** A directory need not carry a layer name — as long as it does not replicate the layer tree, it is fine. When two placement schemes coexist in one domain, every new file becomes a guessing game. **The cost of flattening**: layer directories grow large, so inside them the domain name prefix is the only clue to which feature a file belongs to — the prefix is mandatory, not stylistic.
 
@@ -312,9 +312,9 @@ Offset paging over a non-unique sort key (`createdAt`) lets equal-key rows swap 
 
 Reading rows as positional `Array<*>` with `(row[i] as Number)` casts fails with a `ClassCastException` when a column is reordered, and interpolating SQL text is one edit away from injection. Bound parameters and `Tuple` aliases fail loudly by name.
 
-### REP-14 Reserved words and the Column exception
+### REP-20 Reserved words and the Column exception
 
-When an entity name is a Kotlin/Java reserved word, QueryDSL generates `keyword$`; for a reserved-word property, kapt silently skips the Q-class path. Avoiding reserved words (REP-20) avoids both.
+When an entity name is a Kotlin/Java reserved word, QueryDSL generates `keyword$`; for a reserved-word property, kapt silently skips the Q-class path. Avoiding reserved words avoids both.
 
 ### REP-15 Entity mapping choices
 

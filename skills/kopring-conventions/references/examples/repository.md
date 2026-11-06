@@ -89,7 +89,7 @@ override fun pageByQuery(query: PageOrderQuery): Page<Order> {
         .innerJoin(order.member, member).fetchJoin()
         .leftJoin(order.payment, payment).fetchJoin()
         .where(by(query))
-        .withPagination(query.pageable, *orderTransformer.transform(query.pageable.sort), order.id.asc())
+        .withPagination(query.pageable, *orderTransformer.transform(sort = query.pageable.sort, sortable = PageOrderQuery.SORTABLE), order.id.asc())
         .fetch()
 
     return PageableExecutionUtils.getPage(content, query.pageable) {
@@ -137,7 +137,9 @@ fun existsByProductIdInAndOrderDeletedAtIsNullAndOrderPaidAtIsNotNull(...)
 //    page has its own axis (period · explicit id list) and its own by()
 data class OrderFilter(val status: OrderStatus? = null, val paymentMethod: PaymentMethod? = null, val shipped: Boolean? = null)
 data class ListOrderQuery(val memberIds: List<UUID>? = null, val filter: OrderFilter = OrderFilter())
-data class PageOrderQuery(val startOrderedAt: ZonedDateTime? = null, val endOrderedAt: ZonedDateTime? = null, val orderIds: List<UUID>? = null, val pageable: Pageable)
+data class PageOrderQuery(val startOrderedAt: ZonedDateTime? = null, val endOrderedAt: ZonedDateTime? = null, val orderIds: List<UUID>? = null, val pageable: Pageable) {
+    companion object { val SORTABLE = setOf("orderedAt", "status") }   // the only properties ?sort= may name (REP-38)
+}
 
 interface CustomOrderRepository {
     fun listByQuery(query: ListOrderQuery): List<Order>       // by(ListOrderQuery) — shared with exists
@@ -171,13 +173,24 @@ class Product(
     @Enumerated(EnumType.STRING) val status: ProductStatus,  // name auto, NOT NULL owned by the migration (REP-16)
     val createdBy: UUID,                                     // no annotation
     @Column(length = 32) val code: String,                   // unique only through the migration's partial index (REP-28)
-    var name: String,                                        // length default 255
-    @Column(length = 64) var sku: String? = null,
-    @Column(columnDefinition = "text") var description: String? = null,
+    name: String,
+    sku: String? = null,
+    description: String? = null,
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     val attributes: Map<String, Any> = emptyMap(),           // JSONB needs both (REP-22)
-)
+) {
+    var name: String = name                                  // length default 255; state field (REP-17)
+        protected set
+
+    @Column(length = 64)
+    var sku: String? = sku
+        protected set
+
+    @Column(columnDefinition = "text")
+    var description: String? = description
+        protected set
+}
 
 // ✅ a plain unique constraint sits on @Table under the migration's name (REP-33), so SVC-24 matches it in tests too
 @Entity
@@ -252,7 +265,7 @@ class OrderHistory(
 ```kotlin
 // ✅ JSONB sort — text order only, no type cast (REP-23)
 val orderSpecifiers = OrderSpecifierTransformer(order)
-    .transform(pageable.sort)   // "metadata.priority" → ORDER BY jsonb_extract_path_text(metadata, 'priority') (text)
+    .transform(sort = query.pageable.sort, sortable = PageOrderQuery.SORTABLE)   // "metadata.priority" → ORDER BY jsonb_extract_path_text(metadata, 'priority') (text)
 ```
 
 ## REP-27 · REP-28 — Soft delete shape
@@ -308,13 +321,16 @@ orderRepository.delete(order)
 @Entity
 @Table(name = "\"order\"")                       // reserved word escaped (REP-20)
 class Order(
-    var memo: String?,
+    memo: String?,
     val createdBy: UUID,
     @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "member_id")
     val member: Member,
 ) : BaseTimeEntity() {
     @Id
     val id: UUID = UUID.randomUUID()
+
+    var memo: String? = memo                     // state field (REP-17)
+        protected set
 
     var deletedAt: ZonedDateTime? = null
         protected set

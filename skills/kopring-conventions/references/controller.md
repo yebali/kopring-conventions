@@ -32,7 +32,7 @@
 | CTL-22 | | An endpoint carries only resources its own deployable owns | [§8](#8-restful-api-design) |
 | CTL-23 | | A paged endpoint defaults to `@PageableDefault(size = 20)`; no per-controller page-size constants | [§9](#9-paging) |
 | CTL-24 | | Non-HTTP inbound adapters (scheduler, broker or event listener) live in their protocol directory, stay thin and compose like a controller | [§10](#10-non-http-inbound-adapters) |
-| CTL-25 | | A Feign client lives in `<domain>/client/` for one using domain, `<base>/client/` for two or more; one that calls another deployable of the system only reads | [§11](#11-feign-clients) |
+| CTL-25 | | A Feign client lives in `<domain>/client/` for one using domain, `<base>/client/` for two or more; one that calls another deployable of the system makes only calls the caller waits on ([SVC-38](service.md#6-cross-domain-access)) | [§11](#11-feign-clients) |
 | CTL-26 | | Feign timeouts come from `Duration` properties; each client translates failures with its `ErrorDecoder`; no raw `FeignException` leaves a Service | [§11](#11-feign-clients) |
 | CTL-27 | | An SSE endpoint declares its `@ApiResponse` schema (`oneOf` for variants) | [§12](#12-sse-endpoints) |
 | CTL-28 | | A controller method converts, delegates to the Service (to each domain's Service when composing) and converts back; it never branches on a result (listed exceptions) | [§13](#13-thin-controller) |
@@ -56,7 +56,7 @@ class OrderController(private val orderService: OrderService) {
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     fun deleteOrder(@PathVariable id: UUID, authUser: AuthUser) {
-        orderService.deleteOrder(DeleteOrderCommand(id, authUser.id))
+        orderService.deleteOrder(DeleteOrderCommand(orderId = id, memberId = authUser.id))
     }
 }
 ```
@@ -231,7 +231,7 @@ Before and after: [examples](examples/controller.md#ctl-31--ctl-32--response-fie
 
 | Type | Location | Fields | Use |
 |---|---|---|---|
-| `PaginationResponse<T>` | shared module | mirrors Spring's `Page`: `content`, `totalElements`, `totalPages`, `number`, `size`, `numberOfElements`, `sort`, `first`, `last`, `empty` | paged endpoints, through `PaginationResponse.from(page, ...)` |
+| `PaginationResponse<T>` | shared module | mirrors Spring's `Page`: `content`, `totalElements`, `totalPages`, `number`, `size`, `numberOfElements`, `first`, `last`, `empty` (no `sort`) | paged endpoints, through `PaginationResponse.from(page, ...)` |
 | `ErrorResponse` | shared module | `type` (error code), `status`, `message`, `detail`, `url`, `timestamp` (`ZonedDateTime`, serialized with its offset — `Z` under UTC) | produced by the global `@RestControllerAdvice` only — a controller never returns it |
 
 The default shape of `PaginationResponse`; a project may already have its own equivalent — use that:
@@ -244,7 +244,6 @@ class PaginationResponse<T : Any>(
     val number: Int,
     val size: Int,
     val numberOfElements: Int,
-    val sort: Sort,
     val first: Boolean,
     val last: Boolean,
     val empty: Boolean,
@@ -256,7 +255,6 @@ class PaginationResponse<T : Any>(
         number = page.number,
         size = page.size,
         numberOfElements = page.numberOfElements,
-        sort = page.sort,
         first = page.isFirst,
         last = page.isLast,
         empty = page.isEmpty,
@@ -269,7 +267,7 @@ class PaginationResponse<T : Any>(
 }
 ```
 
-`sort` serializes Spring Data's `Sort` as a bean — `{"empty", "sorted", "unsorted"}`, with no property or direction — so it tells the client nothing. A project defining its own `PaginationResponse` should leave it out.
+The shape has no `sort`: Spring Data's `Sort` serializes as a bean — `{"empty", "sorted", "unsorted"}`, with no property or direction — so it tells the client nothing. A project's own `PaginationResponse` leaves it out too.
 
 ```kotlin
 @PostMapping("/search")
@@ -465,7 +463,7 @@ This is the controller-side peer of [SVC-5](service.md#2-method-signatures) (no 
 
 **Exception — a post-commit external call**: a controller may take what the Service's write returns (e.g. the storage files an edit orphaned) and delete them through another Service after the edit commits, so the edit's `@Transactional` never holds the storage call ([TX-2](transactions.md#3-external-calls-and-compensation)).
 
-**Exception — the plain-option hoist**: a controller may call one remote reader before its Service and pass the answer in the Command, so the Service stays one plain `@Transactional` instead of wrapping the remote call in an `inTx` split ([STY-27](code-style.md#10-prefer-the-plain-option)). The reader call carries no decision of its own — the Service still validates against it.
+**Exception — the plain-option hoist**: a controller may call one remote reader before its Service and pass the answer in the Command; the conditions and the call-site list are [STY-27](code-style.md#10-prefer-the-plain-option).
 
 ## 14. Shared-module wire DTO mapping
 
@@ -473,7 +471,7 @@ This is the controller-side peer of [SVC-5](service.md#2-method-signatures) (no 
 
 **Outbound mirror** — a controller that returns a shared-module wire DTO cannot call `Response.from(result)` (CTL-8) either, because the shared module does not see the service `Result`. The `Result` builds it instead with `toResponse()`, on the same service-side boundary as `Command.from(wireDto)` (`ListMemberResult.toResponse()`).
 
-The rule applies to every inbound adapter, not just HTTP (§10). `ShipOrderCommand.from(ShipOrderMessage)` copies the message and cuts its display strings to the column lengths, called by `OrderService.shipOrder` for each message `ShipOrderMessageListener` consumes; an HTTP instance is an internal callback controller receiving a shared `PaymentCompletedNotification` → `CompletePaymentCommand.from(notification)`.
+The rule applies to every inbound adapter, not just HTTP (§10). `ShipOrderCommand.from(ShipOrderMessage)` copies the message and cuts its display strings to the column lengths; `ShipOrderMessageListener` calls it for each message it consumes and passes the Command to `OrderService.shipOrder`, which takes the Command like any Service method ([SVC-3](service.md#2-method-signatures), CTL-24). An HTTP instance is an internal callback controller receiving a shared `PaymentCompletedNotification` → `CompletePaymentCommand.from(notification)`.
 
 ```kotlin
 // ❌ mapping in the adapter body (every other adapter of the same DTO repeats it)
@@ -481,8 +479,8 @@ private fun onMessage(message: Message) {
     val payload = objectMapper.readValue(message.data, ShipOrderMessage::class.java)
     shipmentRepository.save(Shipment(carrierMemo = payload.carrierMemo?.take(Shipment.CARRIER_MEMO_LENGTH), ...))
 }
-// ✅ adapter delegates; the mapping lives in Command.from, which OrderService.shipOrder calls
-orderService.shipOrder(objectMapper.readValue(message.data, ShipOrderMessage::class.java))
+// ✅ adapter wraps the wire DTO in Command.from and delegates; the mapping lives in Command.from
+orderService.shipOrder(ShipOrderCommand.from(objectMapper.readValue(message.data, ShipOrderMessage::class.java)))
 // ShipOrderCommand companion (service layer — may import the shared wire DTO; the reverse is impossible)
 fun from(message: ShipOrderMessage) = ShipOrderCommand(
     orderId = message.orderId,

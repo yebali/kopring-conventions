@@ -40,7 +40,7 @@
 | REP-31 | | *If the project uses Spring Data Redis repositories:* a field used in a derived query is `@Indexed`; a TTL extension uses `EXPIRE`, never a re-`save` | [§10](#10-redis-repositories) |
 | REP-32 | | A Flyway migration is immutable once merged to the shared branch; one feature's schema change is one migration | [§11](#11-migrations) |
 | REP-33 | | A new unique constraint is named `uq_<table>_<columns>` | [§11](#11-migrations) |
-| REP-35 | | An entity is a plain `class`, never a `data class`, and does not override `equals`/`hashCode`; `plugin.jpa` and all-open are configured | [§6](#6-entity-mapping) |
+| REP-35 | | A JPA `@Entity`, `@MappedSuperclass` or `@Embeddable` is a plain `class`, never a `data class`, and does not override `equals`/`hashCode`; `plugin.jpa` and all-open are configured (a `@RedisHash` entity is a `data class`: §10) | [§6](#6-entity-mapping) |
 | REP-36 | | Every foreign-key column has an index; indexes are `idx_<table>_<columns>`, foreign keys `fk_<table>_<column>` | [§11](#11-migrations) |
 | REP-37 | | A migration on a large table never blocks writes: `CREATE INDEX CONCURRENTLY` in its own file, constraints `NOT VALID` then `VALIDATE`, `NOT NULL` after a backfill | [§11](#11-migrations) |
 | REP-38 | | A paged read sorts only by the properties its Query object allows; any other `sort` is a 400 | [§4](#4-filters-and-ordering) |
@@ -152,14 +152,14 @@ Example: [REP-9](examples/repository.md#rep-9--query-object-clustering).
 
 Never `takeIf { it.isNotEmpty() }` to mean "all": it turns an empty selection into every row.
 
-**REP-12** — Every ordering ends with the entity id ascending as a tie-breaker, so offset paging never skips or repeats rows (`orderTransformer` is the project's `Sort` → `OrderSpecifier` converter):
+**REP-12** — Every ordering ends with the entity id ascending as a tie-breaker, so offset paging never skips or repeats rows. A client's `Sort` goes through the project's one shared `Sort` → `OrderSpecifier` transformer (`orderTransformer = OrderSpecifierTransformer(order)`): `transform(sort, sortable)` resolves each property to a path of the entity — an association path as an implicit join, a JSONB map key as its text value (REP-23) — and rejects a property outside `sortable`, the Query object's `SORTABLE` set (REP-38):
 
 ```kotlin
-.orderBy(*orderTransformer.transform(sort), order.id.asc())
-.withPagination(query.pageable, *orderTransformer.transform(query.pageable.sort), order.id.asc())   // paged form
+.orderBy(order.orderedAt.desc(), order.id.asc())   // fixed ordering
+.withPagination(query.pageable, *orderTransformer.transform(sort = query.pageable.sort, sortable = PageOrderQuery.SORTABLE), order.id.asc())   // paged form, client sort
 ```
 
-**REP-38** — The `Sort` of a paged read comes from the client's `?sort=`, and the shared `Sort` → `OrderSpecifier` transformer (REP-23) resolves any mapped path: an association path (an implicit join), an unindexed column of a large table, a field the client may not see, a JSONB key. Each `Page*Query` declares the properties it sorts by (`companion object { val SORTABLE = setOf("createdAt", "status") }`), the transformer receives that set, and a property outside it raises the domain's 400. REP-12's id tie-breaker is appended after the allowed properties.
+**REP-38** — The `Sort` of a paged read comes from the client's `?sort=`, and the shared `Sort` → `OrderSpecifier` transformer (REP-12) resolves any mapped path: an association path (an implicit join), an unindexed column of a large table, a field the client may not see, a JSONB key. Each `Page*Query` declares the properties it sorts by (`companion object { val SORTABLE = setOf("createdAt", "status") }`), the transformer receives that set, and a property outside it raises the domain's 400. REP-12's id tie-breaker is appended after the allowed properties.
 
 ## 5. Native SQL
 
@@ -216,7 +216,7 @@ Example: [REP-14](examples/repository.md#rep-14--entity-column-policy).
 
 Example: [REP-21 · REP-34](examples/repository.md#rep-21--rep-34--entity-layer-and-computed-property).
 
-**REP-35** — An entity is a plain `class`, never a `data class`: a generated `equals`/`hashCode`/`toString` reads every property, so it initializes LAZY associations, recurses through bidirectional ones, and changes its hash when a field changes, which loses the entity inside a `HashSet`. An entity does not override `equals`/`hashCode` either: within one persistence context Hibernate keeps one instance per row, so identity equality holds, and code comparing entities across contexts compares ids. The build applies `kotlin("plugin.jpa")` (no-arg constructors) and all-open for `@Entity`, `@MappedSuperclass` and `@Embeddable`; without all-open a final Kotlin class cannot be proxied, and every LAZY to-one loads eagerly.
+**REP-35** — A JPA `@Entity`, `@MappedSuperclass` or `@Embeddable` class is a plain `class`, never a `data class`: a generated `equals`/`hashCode`/`toString` reads every property, so it initializes LAZY associations, recurses through bidirectional ones, and changes its hash when a field changes, which loses the entity inside a `HashSet`. An entity does not override `equals`/`hashCode` either: within one persistence context Hibernate keeps one instance per row, so identity equality holds, and code comparing entities across contexts compares ids. The build applies `kotlin("plugin.jpa")` (no-arg constructors) and all-open for `@Entity`, `@MappedSuperclass` and `@Embeddable`; without all-open a final Kotlin class cannot be proxied, and every LAZY to-one loads eagerly. A `@RedisHash` entity is not a JPA type and is a `data class` with every persisted field in its constructor ([REP-31](#10-redis-repositories)).
 
 ## 7. JSONB
 
@@ -224,7 +224,7 @@ Example: [REP-21 · REP-34](examples/repository.md#rep-21--rep-34--entity-layer-
 
 **REP-22** — A JSONB column carries both `@JdbcTypeCode(SqlTypes.JSON)` and `@Column(columnDefinition = "jsonb")`. `@JdbcTypeCode` drives the JSON serialization, and with the PostgreSQL dialect it alone maps to `jsonb`; `columnDefinition = "jsonb"` makes the column type explicit for schema generation and validation and for readers.
 
-**REP-23** — JSONB queries go through one shared JSONB query util: a `.jsonbField(vararg keys)` extension extracts the value as text, then `.containsIgnoreCase()`, `.eq(...)`. There is no numeric cast — a JSONB value compares and sorts as text. Sorting passes the `Sort` to the shared `Sort` → `OrderSpecifier` transformer (`OrderSpecifierTransformer(entityPath).transform(sort)`); a property whose first segment is a JSONB map field (`metadata.priority`) orders by that key's text value, so numbers sort lexicographically (`"10"` before `"9"`). There is no per-field cast; the sortable properties are limited by REP-38.
+**REP-23** — JSONB queries go through one shared JSONB query util: a `.jsonbField(vararg keys)` extension extracts the value as text, then `.containsIgnoreCase()`, `.eq(...)`. There is no numeric cast — a JSONB value compares and sorts as text. Sorting goes through the shared `Sort` → `OrderSpecifier` transformer ([REP-12](#4-filters-and-ordering)); a property whose first segment is a JSONB map field (`metadata.priority`) orders by that key's text value, so numbers sort lexicographically (`"10"` before `"9"`). There is no per-field cast; the sortable properties are limited by REP-38.
 
 **REP-24** — An insert-only entity carrying a JSONB value with a nested collection (`snapshot = {"items": [{"sku": "A-1", "quantity": 2}]}`) is `@org.hibernate.annotations.Immutable`. Hibernate's JSON type does not deep-copy the snapshot, so such a value is judged dirty on every flush and each inserted row gets a redundant UPDATE; flat maps do not reproduce it.
 

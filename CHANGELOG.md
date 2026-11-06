@@ -2,6 +2,20 @@
 
 Rule identifiers added, changed, removed or renumbered, newest first. A consuming project checks this list when it updates the skill, because its own rule document overrides the skill by identifier.
 
+## 2026-11-06
+
+Consistency pass: no rule added or renumbered; texts that disagreed with each other now say one thing.
+
+- **Changed** `CTL-25`: the Hard Rules line matches its detail and SVC-38 — a client calling another deployable makes only calls the caller waits on (writes included), not reads only.
+- **Changed** `CTL-29`: the inbound adapter wraps the wire DTO, `service.x(XCommand.from(message))`; the Service takes the Command (SVC-3, CTL-24). Examples follow.
+- **Changed** `REP-35`: scoped to JPA `@Entity`/`@MappedSuperclass`/`@Embeddable`; a `@RedisHash` entity stays a `data class` (REP-31).
+- **Changed** `REP-12`, `REP-23`, `REP-38`: the sort transformer is defined under REP-12 and always receives the query's `SORTABLE` set.
+- **Changed** `TST-4`: relies on springmockk's per-test mock clearing (TST-26), not a base `clearAllMocks()`.
+- **Changed** `STY-54`: adds the `<domain>.<broker>` package for inbound message handlers (CTL-24).
+- **Fixed** the `PaginationResponse` default snippet still carrying `sort` (CTL-11), and ✅ examples that broke STY-11, STY-19, STY-32, SVC-8, SVC-35, REP-17, CTL-19 and TX-9.
+- **Lint:** `blank-line-before-return.sh` flags only a function's final top-level `return` (STY-10 as written; early returns in inner blocks are no longer hits). `convention-lint.sh` adds STY-12, labels `restoreSharedDoubles` as TST-26 and `deleteAllBy*` as REP-8, applies `.convention-lint-ignore` from any working directory, and accepts `*` as the rule ID for an exempt tree. New `changed-files.sh` lists a branch's in-scope changes.
+- **Skills:** `kopring-conventions` loads a reference's §1 table first instead of the whole file; `check-conventions` caps a run at 20 agents of ~150 files and reports STY-28 folds as `ask`; `structure-metrics.sh` runs in about a second and walks only the modules in `settings.gradle.kts`.
+
 ## 2026-10-30
 
 Adopting these changes in an existing project — run `check-conventions all`, whose Check F covers the setup items; the lint covers the line items:

@@ -74,7 +74,7 @@ Services live in `service/*.kt`, Commands and Results in `service/command/*.kt`.
 // the entity is imported as `OrderEntity` so the nested DTO keeps the plain name (STY-50)
 data class ListOrderResult(val orders: List<Order>) {
     data class Order(val id: UUID, val memberId: UUID)
-    companion object { fun from(orders: List<OrderEntity>) = ListOrderResult(orders.map { Order(it.id, it.memberId) }) }
+    companion object { fun from(orders: List<OrderEntity>) = ListOrderResult(orders.map { Order(id = it.id, memberId = it.memberId) }) }
 }
 // ❌ reusing OrderResult as the element type
 data class ListOrderResult(val orders: List<OrderResult>)
@@ -403,7 +403,7 @@ An in-process event carries a state change from one domain to the domains it aff
 | Must commit and roll back with the publisher | Synchronous `@EventListener` | At `publishEvent`, inside the publisher's transaction | The publisher rolls back too |
 | May run once the publisher's write is durable | `@TransactionalEventListener(phase = AFTER_COMMIT, fallbackExecution = true)` | After the publisher commits | The publisher stays committed; only this effect is lost |
 
-An `AFTER_COMMIT` listener is only for an effect the publisher can do without when it fails — one that can be retried or reconciled later (a notification, a cache eviction, a message publish). Its DB writes run in `transactionRunner.inNewTx { }`: a `REQUIRED` boundary opened there joins the committed transaction and never commits ([TX-7](transactions.md#3-external-calls-and-compensation)). It still holds the publisher's pooled connection, so only a short external call with a configured client timeout runs inline; a slow or unbounded one goes to a Spring-managed executor ([TX-2](transactions.md#3-external-calls-and-compensation)).
+An `AFTER_COMMIT` listener is only for an effect the publisher can do without when it fails — one that can be retried or reconciled later (a notification, a cache eviction, a message publish). Its DB writes run in `transactionRunner.inNewTx { }`: a `REQUIRED` boundary opened there joins the committed transaction and never commits ([TX-7](transactions.md#3-external-calls-and-compensation)). Its external calls follow the `AFTER_COMMIT` exception of [TX-2](transactions.md#3-external-calls-and-compensation): only a short call with a configured client timeout runs inline; a slow or unbounded one goes to a Spring-managed executor.
 
 **SVC-41** — The publishing domain owns the event class in its `<domain>/event/` package, named as a fact that already happened ([STY-53](code-style.md#18-transport-dto-suffix): ✅ `GroupCreatedEvent` ❌ `CreateBoardEvent`). The affected domain owns the listener in its own `<domain>/event/` package: a `@Component` `*Listener` ([SVC-30](#10-service-vs-component)) that turns the event into a Command and delegates to its own domain's Service, with no business logic of its own — the same thin shape as [CTL-24](controller.md#10-non-http-inbound-adapters). The dependency points one way, from the listener's domain to the event class; the publisher never learns who listens.
 

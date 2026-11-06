@@ -89,15 +89,15 @@ payment = result.payment?.let {
 ```kotlin
 // ❌ Bad — the final return is glued to the statement above
 fun createOrder(command: CreateOrderCommand): OrderResult {
-    val order = orderRepository.save(Order.from(command))
-    eventPublisher.publishEvent(OrderCreatedEvent(order.id))
+    val order = orderRepository.save(command.toEntity())
+    applicationEventPublisher.publishEvent(OrderCreatedEvent(order.id))
     return OrderResult.from(order)
 }
 
 // ✅ Good
 fun createOrder(command: CreateOrderCommand): OrderResult {
-    val order = orderRepository.save(Order.from(command))
-    eventPublisher.publishEvent(OrderCreatedEvent(order.id))
+    val order = orderRepository.save(command.toEntity())
+    applicationEventPublisher.publishEvent(OrderCreatedEvent(order.id))
 
     return OrderResult.from(order)
 }
@@ -134,8 +134,7 @@ class Shipment(...)
 enum class ShipmentStatus { READY, SHIPPED }
 
 fun assign(warehouseId: UUID) {
-    val key = ShipmentKey(orderId, lineNo) // 주문-품목 단위 배정 키 생성
-    queue.push(key) // 큐에 넣는다
+    queue.push(ShipmentKey(orderId = orderId, lineNo = lineNo)) // 주문-품목 단위 배정 키를 큐에 넣는다
 }
 
 // ✅ Good — one-line class summary, self-explanatory function left bare
@@ -146,8 +145,7 @@ class Shipment(...)
 enum class ShipmentStatus { READY, SHIPPED }
 
 fun assign(warehouseId: UUID) {
-    val key = ShipmentKey(orderId, lineNo)
-    queue.push(key)
+    queue.push(ShipmentKey(orderId = orderId, lineNo = lineNo))
 }
 ```
 
@@ -157,12 +155,12 @@ fun assign(warehouseId: UUID) {
 // ❌ trivial lines commented, the one line that actually needs it left bare
 .filterNot { it == withdrawingMemberId } // 탈퇴 대상 본인 제외
 val order = orderRepository.save(...) // order 행 insert
-if (local.updatedAt == remote.updatedAt) return remote
+if (local.updatedAt.isEqual(remote.updatedAt)) return remote
 
 // ✅ self-explanatory lines bare, the non-obvious tie-break explained
 .filterNot { it == withdrawingMemberId }
 val order = orderRepository.save(...)
-if (local.updatedAt == remote.updatedAt) return remote // 동시 갱신 시 remote 우선(LWW), 회원 id 는 tie-break 로 쓰지 않는다
+if (local.updatedAt.isEqual(remote.updatedAt)) return remote // 동시 갱신 시 remote 우선(LWW), 회원 id 는 tie-break 로 쓰지 않는다
 ```
 
 ## STY-17 — Comment ktlint traps

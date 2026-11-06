@@ -104,7 +104,7 @@ command.orders.forEach { row ->
 }
 // ✅ parent saveAll, then child saveAll
 val orders = orderRepository.saveAll(command.orders.map { newOrder(it) })
-orderItemRepository.saveAll(command.orders.zip(orders) { row, order -> OrderItem(order, ...) })
+orderItemRepository.saveAll(command.orders.zip(orders) { row, order -> OrderItem(order = order, ...) })
 ```
 
 ## SVC-27 · SVC-28 — EnumMapper
@@ -218,7 +218,7 @@ interface AccountClient {
     fun getAccount(@PathVariable accountId: UUID): AccountResponse
 
     // ✅ the caller waits on a write — the end user receives the copied file, so the call is HTTP
-    @PostMapping("/api/v1/files/copy")
+    @PostMapping("/api/v1/files/copies")
     fun copyFile(@RequestBody request: CopyFileRequest): CopyFileResponse
 }
 
@@ -227,7 +227,7 @@ interface AccountClient {
 class DeactivateUserMessageListener(private val userService: UserService) {
     @KafkaListener(topics = ["\${app.kafka.topics.deactivate-user}"])
     fun onDeactivateUser(message: DeactivateUserMessage) {
-        userService.deactivateUser(DeactivateUserCommand(userId = message.userId))
+        userService.deactivateUser(DeactivateUserCommand.from(message))
     }
 }
 
@@ -293,7 +293,7 @@ fun placeOrder(command: CreateOrderCommand): PlaceOrderResult {
 }
 
 private fun safeDeleteOrder(orderId: UUID, memberId: UUID) {
-    runCatching { orderService.deleteOrder(DeleteOrderCommand(orderId, memberId)) }
+    runCatching { orderService.deleteOrder(DeleteOrderCommand(orderId = orderId, memberId = memberId)) }
         .onFailure { e -> logger.warn(e) { "Failed to compensate: orderId=$orderId" } }
 }
 ```
@@ -303,16 +303,17 @@ private fun safeDeleteOrder(orderId: UUID, memberId: UUID) {
 *If the project uses PostgreSQL advisory locks / Redis.*
 
 ```kotlin
-// ✅ startup seeding — mutual exclusion is needed all the way to the commit
+// ✅ startup seeding — mutual exclusion is needed all the way to the commit, so inTx wraps only the lock and the DB work (TX-9)
 @EventListener(ApplicationReadyEvent::class)
-@Transactional
 fun init() {
-    advisoryLockTemplate.acquireLocks(exclusiveKeys = listOf(LOCK_KEY))
-    seedCategories()
+    transactionRunner.inTx {
+        advisoryLockTemplate.acquireLocks(exclusiveKeys = listOf(LOCK_KEY))
+        seedCategories()
+    }
 }
 // ✅ periodic work — if it is not acquired, the next cycle recovers
 distributedLockTemplate.runIfAcquired(key = LOCK_KEY, ttl = LOCK_TTL) { staleOrderService.cancelStaleOrders() }
-// ❌ advisory without @Transactional — the lock is released at once and blocks nothing (no error, no log)
+// ❌ advisory outside a transaction — the lock is released at once and blocks nothing (no error, no log)
 @EventListener(ApplicationReadyEvent::class)
 fun init() { advisoryLockTemplate.acquireLocks(exclusiveKeys = listOf(LOCK_KEY)); seedCategories() }
 // ❌ a fallback that waits and then runs unlocked — it reads as if the "lock" guaranteed something it does not

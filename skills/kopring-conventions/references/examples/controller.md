@@ -8,7 +8,11 @@ Rule text, conditions and exceptions live in [controller.md](../controller.md); 
 // ✅ inner DTO inside the Request; ❌ would be a top-level `data class Item(...)` in its own file
 data class CreateOrderRequest(val memo: String?, val items: List<Item>) {
     data class Item(val productId: UUID, val quantity: Int)
-    fun toCommand(memberId: UUID) = CreateOrderCommand(memo, items.map { CreateOrderCommand.Item(it.productId, it.quantity) }, memberId)
+    fun toCommand(memberId: UUID) = CreateOrderCommand(
+        memo = memo,
+        items = items.map { CreateOrderCommand.Item(productId = it.productId, quantity = it.quantity) },
+        memberId = memberId,
+    )
 }
 ```
 
@@ -43,7 +47,11 @@ data class GetOrderResponse(val shippingAddress: ShippingAddress, ...)
 data class CreateOrderRequest(val shippingAddress: ShippingAddress, ...) {
     data class ShippingAddress(val recipient: String?, val zipCode: String?, val phone: String?)
     fun toCommand(authUser: AuthUser) = CreateOrderCommand(
-        shippingAddress = CreateOrderCommand.ShippingAddress(shippingAddress.recipient, shippingAddress.zipCode, shippingAddress.phone),
+        shippingAddress = CreateOrderCommand.ShippingAddress(
+            recipient = shippingAddress.recipient,
+            zipCode = shippingAddress.zipCode,
+            phone = shippingAddress.phone,
+        ),
         ...
     )
 }
@@ -58,7 +66,11 @@ data class GetOrderResult(val shippingAddress: ShippingAddress, ...) {
     data class ShippingAddress(val recipient: String?, val zipCode: String?, val phone: String?)
     companion object {
         fun from(order: Order, ...) = GetOrderResult(
-            shippingAddress = ShippingAddress(order.shippingAddress.recipient, order.shippingAddress.zipCode, order.shippingAddress.phone),
+            shippingAddress = ShippingAddress(
+                recipient = order.shippingAddress.recipient,
+                zipCode = order.shippingAddress.zipCode,
+                phone = order.shippingAddress.phone,
+            ),
             ...
         )
     }

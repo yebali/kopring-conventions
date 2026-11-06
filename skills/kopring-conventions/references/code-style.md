@@ -169,7 +169,7 @@ Explanation is split by altitude — what a reader needs before opening a file d
 
 **STY-16** — A class or function gets a KDoc summary only when a trigger in the decision table ([§5.3](#53-deciding-a-comment-finding)) holds: for a class, its name and package do not state its role; for a function, it has a side effect its name does not say, absorbs a failure or returns a value with a special meaning, carries an ordering guarantee callers rely on, or expects a precondition, transaction or lock its signature does not show. A summary is one line, rarely two, states what the declaration is for — not how it is implemented and not why it exists — and carries no `@param`/`@return`/`@throws` tags; the signature already says those. Skip it when the declaration already says it: a `*NotFoundException`, a one-line expression-body function whose signature predicts the body, a data class whose name and fields are the whole story, a trivial getter or override. A summary that keeps growing past ~3 lines to state *what* is a sign the declaration needs splitting, not a longer comment.
 
-**STY-17** — Line comments are reserved for genuinely complex logic: a branch, calculation, ordering or edge case a careful reader could still get wrong. Most executable lines get none. A self-naming call (`logger.info { }`, `eventPublisher.publishEvent(...)`, a guard clause whose condition names itself), a plain assignment or a one-line CRUD or repository call needs no comment. Tests carry none ([TST-1](testing.md#3-test-structure)).
+**STY-17** — Line comments are reserved for genuinely complex logic: a branch, calculation, ordering or edge case a careful reader could still get wrong. Most executable lines get none. A self-naming call (`logger.info { }`, `applicationEventPublisher.publishEvent(...)`, a guard clause whose condition names itself), a plain assignment or a one-line CRUD or repository call needs no comment. Tests carry none ([TST-1](testing.md#3-test-structure)).
 
 - **Present tense, current state only.** A comment states what the code does now. It does not say why it was written this way, what it used to be, what it was renamed or moved from, or which ticket or migration changed it; the history words are listed in the *History or rationale* row of the decision table. Rationale belongs in the project's decision records and history in the commit body.
 - **Domain vocabulary, never a translation of the code.** A comment — summary or line comment alike — that renders type and method names back into prose carries no information and drifts on every refactor. Write what it means in domain vocabulary. [Example](examples/code-style.md#sty-16--sty-17--summaries-and-line-comments)
@@ -185,7 +185,7 @@ It describes the current code's ceiling, so it is current state, not rationale o
 
 ### 5.1 What is never commented
 
-**Never commented**: `package` and `import` lines · annotations · property declarations · data-class fields · closing braces · a `logger.info/warn/debug/error { }` line, an `eventPublisher.publishEvent(…)` line, a bare `return X.from(…)` — the message string, the event constructor and the target type already say in domain vocabulary what the line does, so any comment there is translation by construction · `src/test/**` ([TST-1](testing.md#3-test-structure)).
+**Never commented**: `package` and `import` lines · annotations · property declarations · data-class fields · closing braces · a `logger.info/warn/debug/error { }` line, an `applicationEventPublisher.publishEvent(…)` line, a bare `return X.from(…)` — the message string, the event constructor and the target type already say in domain vocabulary what the line does, so any comment there is translation by construction · `src/test/**` ([TST-1](testing.md#3-test-structure)).
 
 **Not comments** (governed by their own rules; keep writing them): `@field:Schema(description=…)` and `@Parameter(description=…)` ([CTL-9](controller.md#45-openapi-descriptions)) · a KDoc another rule demands as the justification for an approved exception (an `@EntityGraph` exception under [REP-2](repository.md#21-priority), an unavoidable `@Lazy` under [SVC-20](service.md#63-breaking-bean-cycles-without-lazy)).
 
@@ -288,7 +288,7 @@ fun ship(command: ShipOrderCommand): ShipOrderResult {
 
 **Exemptions**
 
-- `Custom*RepositoryImpl` — QueryDSL predicate assembly follows [REP-5](repository.md#22-by-predicate) and [REP-10](repository.md#31-multi-condition-reads), so STY-21 and STY-22 do not apply.
+- `Custom*RepositoryImpl` — QueryDSL predicate assembly follows [REP-5](repository.md#22-by-predicate) and [REP-9](repository.md#31-multi-condition-reads), so STY-21 and STY-22 do not apply.
 - STY-24 — a name another rule or a supertype fixes: Spring Data derived queries, the qualifiers [SVC-18](service.md#6-cross-domain-access) requires (the `With…` part is not counted), `override` methods.
 
 STY-19 folds single-use variables and STY-28 folds the abstractions [§10](#10-prefer-the-plain-option) lists; neither folds a step method STY-21 asks for, nor a chain moved to a collaborator for cohesion. Private method order: [SVC-22](service.md#7-method-order). Whether a feature is simple or composed is a review judgment.
@@ -550,6 +550,7 @@ For the same operation, the service input and the wire **share the verb-object a
 |---|---|
 | `<domain>.controller` | `@RestController` classes |
 | `<domain>.controller.rest` | `*Request` / `*Response` ([CTL-5](controller.md#41-inner-data-classes)) |
+| `<domain>.<broker>` (e.g. `order.kafka`) | inbound message handlers (`*Listener`) of that broker, never in a Service package ([CTL-24](controller.md#10-non-http-inbound-adapters)) |
 | `<domain>.service` | `@Service` use cases and role-suffixed `@Component` beans ([SVC-30](service.md#10-service-vs-component)) |
 | `<domain>.service.command` | `*Command` / `*Result` ([SERVICE §3](service.md#3-command-and-result)) |
 | `<domain>.repository` | repositories, `Custom*Repository` / `Custom*RepositoryImpl` |
