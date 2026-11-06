@@ -1,0 +1,3 @@
+# fixture exceptions — one `path-glob:ID` per line, `*` = every rule
+m/src/main/kotlin/x/Paged.kt:REP-10
+legacy/*:*

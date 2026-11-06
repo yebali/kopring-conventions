@@ -3,7 +3,8 @@
 #
 # ktlint has no rule for this, so the convention is otherwise unenforceable unless
 # detekt is wired in. Used by coding-workflow (done gate) and check-conventions
-# (Check D). Run from anywhere inside the repo.
+# (Check D). Run from anywhere inside the repo; file arguments may be relative to
+# the current directory or absolute, and hits are reported relative to the repo root.
 #
 #   bash blank-line-before-return.sh                  # report over the whole tree (prints file:line, exits 1 if any)
 #   bash blank-line-before-return.sh a.kt b.kt        # report over these files only
@@ -11,23 +12,40 @@
 #   bash blank-line-before-return.sh --fix            # … in the whole tree
 #   → exits 2 when no Kotlin source file was scanned
 #
-# Detection: a `return` that (a) is the last statement of its block — the next
-# line at or below its indent is the block's closing brace — and (b) is preceded
-# by a statement line that is not blank, not a block opener, and not a comment.
-# Multi-line `return` expressions are included; a naive "next line is the
-# closing brace" check undercounts them roughly 4x.
+# Detection: a `return` that (a) is the last statement of its block (the next
+# line at or below its indent is the block's closing brace), (b) sits in a `fun`
+# body (walking up to the line at the brace's indent, and past a multi-line
+# signature's `): T {`, reaches a `fun` declaration with no `=` outside its
+# parameter lists; an expression body's lambda is not a function body), and (c) is
+# preceded by a statement line that is not blank, not a block opener, and not a
+# comment. A `return` closing an inner block (if/when branch/for/try/lambda) is an
+# early return and out of scope.
+# Multi-line `return` expressions are included; a naive "next line is the closing
+# brace" check undercounts them roughly 4x. Blind spots: property accessors
+# (`get() { … }`), and a body containing a line indented left of the function
+# (a raw string at column 0).
+#
+# Project exceptions: `.convention-lint-ignore` at the repository root (see
+# convention-lint.sh); entries whose ID is `STY-10` or `*` drop the hits on their paths.
 set -euo pipefail
 
 MODE=report
 if [ "${1:-}" = "--fix" ]; then MODE=--fix; shift; fi
 
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)
 FILES=$(mktemp)
 trap 'rm -f "$FILES"' EXIT
-if [ "$#" -gt 0 ]; then
-    for f in "$@"; do case "$f" in *.kt) [ -f "$f" ] && printf '%s\n' "$f" ;; esac; done > "$FILES"
-else
-    cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-    find . \( -path "*/src/main/kotlin/*" -o -path "*/src/test/kotlin/*" \) -name "*.kt" -not -path "*/build/*" | sort > "$FILES"
+# every argument becomes a ROOT-relative path, whatever the current directory
+for f in "$@"; do
+    case "$f" in *.kt) [ -f "$f" ] || continue ;; *) continue ;; esac
+    case "$f" in */*) d=${f%/*} ;; *) d=. ;; esac
+    f=$(cd "$d" && pwd -P)/${f##*/}
+    printf '%s\n' "${f#"$ROOT"/}"
+done > "$FILES"
+cd "$ROOT"
+if [ "$#" -eq 0 ]; then
+    find . \( -path "*/src/main/kotlin/*" -o -path "*/src/test/kotlin/*" \) -name "*.kt" -not -path "*/build/*" |
+        sed 's#^\./##' | sort > "$FILES"
 fi
 if [ ! -s "$FILES" ]; then
     echo "blank-line-before-return: no Kotlin source file was scanned" >&2
@@ -39,6 +57,21 @@ fi
 detect() {
     tr '\n' '\0' < "$FILES" |
         xargs -0 awk '
+            # Is the block whose opener sits at indent oi, above line i, a function body?
+            function fun_body(i, oi,   k, o, h) {
+                for (k = i - 1; k > 0; k--) {
+                    if (line[k] ~ /^[ ]*$/) continue
+                    match(line[k], /^[ ]*/)
+                    if (RLENGTH < oi) return 0
+                    if (RLENGTH > oi) continue
+                    if (!o) o = k                             # the line holding the `{`
+                    if (line[k] !~ /^[ ]*[)}\]>]/) break        # not a `): T {` / `} else {` continuation
+                }
+                if (k < 1 || line[k] !~ /^[ ]*([A-Za-z@][^ ]*[ ]+)*fun[ (<]/) return 0
+                for (h = ""; k <= o; k++) h = h " " line[k]
+                while (gsub(/\([^()]*\)/, "", h)) ;            # drop parameter lists (default values hold `=`)
+                return h !~ /=/
+            }
             function flush(   i, j, ci, closer) {
                 for (i = 2; i <= n; i++) {
                     if (line[i] !~ /^[ ]+return[ (]/) continue
@@ -49,6 +82,7 @@ detect() {
                     if (line[i-1] ~ /(\{|->)[ ]*$/) continue
                     if (line[i-1] ~ /^[ ]*\/\//) continue     # comment directly above
                     match(line[i], /^[ ]*/); ci = RLENGTH
+                    if (!fun_body(i, ci - 4)) continue        # early return out of an inner block
                     closer = sprintf("%*s}", ci - 4, "")
                     for (j = i + 1; j <= n; j++) {
                         if (line[j] == closer) { print f ":" i; break }
@@ -67,7 +101,25 @@ detect() {
         '
 }
 
-hits=$(detect)
+# Drop the hits `.convention-lint-ignore` exempts (entry ID `STY-10` or `*`).
+unignored() {
+    local hit path entry pat drop
+    while IFS= read -r hit; do
+        path=${hit%%:*}; drop=0
+        if [ -f .convention-lint-ignore ]; then
+            while IFS= read -r entry || [ -n "$entry" ]; do
+                case "$entry" in ''|'#'*) continue ;; esac
+                case "${entry##*:}" in STY-10|'*') ;; *) continue ;; esac
+                pat=${entry%:*}; pat=${pat#./}
+                # shellcheck disable=SC2254
+                case "$path" in $pat) drop=1; break ;; esac
+            done < .convention-lint-ignore
+        fi
+        if [ "$drop" -eq 0 ]; then printf '%s\n' "$hit"; fi
+    done
+}
+
+hits=$(detect | unignored)
 total=$([ -z "$hits" ] && echo 0 || printf '%s\n' "$hits" | wc -l | tr -d ' ')
 
 if [ "$MODE" != "--fix" ]; then
@@ -78,7 +130,7 @@ if [ "$MODE" != "--fix" ]; then
     exit 0
 fi
 
-# Fix mode: one awk rewrite per affected file per affected file, not per scanned file.
+# Fix mode: one awk rewrite per affected file, not per scanned file.
 printf '%s\n' "$hits" | awk -F: 'NF==2 {a[$1] = a[$1] " " $2} END {for (f in a) print f a[f]}' |
     while read -r file lines; do
         marks=$(printf '%s' "$lines" | tr ' ' ',')

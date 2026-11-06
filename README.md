@@ -48,9 +48,13 @@ A project's own instructions (`CLAUDE.md`, `AGENTS.md`, `docs/`) override these 
 bash skills/kopring-conventions/scripts/convention-lint.sh              # whole repository
 bash skills/kopring-conventions/scripts/convention-lint.sh a.kt b.kt    # only these files
 bash skills/kopring-conventions/scripts/blank-line-before-return.sh [--fix] [a.kt b.kt]   # STY-10
+bash skills/kopring-conventions/scripts/changed-files.sh                # the current branch's changed files
+bash skills/kopring-conventions/scripts/tests/run.sh                    # self-check of the scripts above
 ```
 
-Run them from the project's repository. `convention-lint.sh` prints one `path:line: [ID] message` line per hit; both scripts exit 1 when anything is found and 2 when no Kotlin source file was scanned. `BASE_PACKAGE=com.acme` sets the root package for the fully-qualified-name check; the default is detected from the sources. A project lists the exceptions its own rule document grants in `.convention-lint-ignore` at its root, one `path-glob:ID` per line. The lint covers only the greppable subset of the rules.
+Run them from anywhere inside the project's repository; file arguments may be relative to the current directory or absolute, and every path is reported relative to the repository root. `convention-lint.sh` prints one `path:line: [ID] message` line per hit (`path:line` for STY-10); both lint scripts exit 1 when anything is found and 2 when no Kotlin source file was scanned. `BASE_PACKAGE=com.acme` sets the root package for the fully-qualified-name check; the default is detected from the sources. A project lists the exceptions its own rule document grants in `.convention-lint-ignore` at its root, one `path-glob:ID` per line; the ID `*` exempts the path from every rule (`legacy-module/*:*`), and both lint scripts honor the file. The lint covers only the greppable subset of the rules.
+
+`changed-files.sh` prints the Kotlin sources and `application*.yml` files changed on the current branch — committed since the base branch, modified, or untracked — one repository-relative path per line, without the trees a `*` entry exempts; it reports the detected base branch on stderr as `base: <branch>`. A skill that defaults to the branch's changes calls it rather than detecting the base itself.
 
 ## Layout
 

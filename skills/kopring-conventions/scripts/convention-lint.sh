@@ -3,7 +3,8 @@
 # Report-only — no fix mode. Run from anywhere inside a Kotlin/Spring repository.
 #
 #   bash convention-lint.sh              # whole tree (src/main/kotlin + src/test/kotlin of every module)
-#   bash convention-lint.sh a.kt b.kt    # only these files (main/test decided by their path)
+#   bash convention-lint.sh a.kt b.kt    # only these files (main/test decided by their path; relative to the
+#                                        # current directory or absolute — hits are reported relative to the repo root)
 #   → prints `path:line: [ID] message`, exits 1 if any, 2 if no Kotlin source file was scanned
 #
 #   BASE_PACKAGE=com.acme bash convention-lint.sh   # root package for the STY-2 FQN check;
@@ -11,7 +12,8 @@
 #
 # Project exceptions: `.convention-lint-ignore` at the repository root, one `path-glob:ID` per line
 # (`#` comments allowed), e.g. `common-core/src/main/kotlin/*:SVC-15`. A hit whose path matches the
-# glob and whose ID matches is dropped. Keep each entry backed by the project's own rule document.
+# glob and whose ID matches is dropped; the ID `*` matches every rule (`legacy-module/*:*` exempts a whole
+# tree, and changed-files.sh leaves it out too). Keep each entry backed by the project's own rule document.
 #
 # Implemented rules (scope · blind spots):
 #   STY-1  LoggerFactory, KotlinLogging.logger (main). Not flagged: the file defining the `Logger` base
@@ -22,6 +24,14 @@
 #       other packages (java.util.UUID …).
 #   STY-7  `!!` (main + test). Blind spot: `!!` inside a string or comment false-positives.
 #   STY-8  @Suppress("UNCHECKED_CAST") (main + test).
+#   STY-12 2+ top-level types in one file — column-0 `class` (any modifier) / `object` / `interface` (main + test),
+#       reported at the second declaration. A carve-out is judged by declaration shape: a sealed type whose
+#       other types list it among their supertypes, an @Entity with the type its @IdClass(X::class) names, a
+#       @Configuration with only @ConfigurationProperties classes, one `object` with only `enum class`es
+#       (`fun main` is no type, so the @SpringBootApplication carve-out needs no check). Blind spots: whether
+#       the @Configuration really binds the properties class, a deeper sealed level (a subtype of a subtype is
+#       a hit), a supertype on a line after the header that does not follow a trailing comma, annotations
+#       separated from the declaration by a comment or blank line, a declaration inside a raw string.
 #   STY-17 history word in a comment (기존에는 · 예전에는 · 이전에는 · 바뀌었다 · 옮겼다 · 대체했다) (main + test).
 #       A rationale written without one of these words stays agent-judged.
 #   STY-30 ZoneId.systemDefault() (main).
@@ -46,15 +56,15 @@
 #   REP-1  @Query / @Modifying (main).
 #   REP-3  stereotype on Custom*RepositoryImpl (main).
 #   REP-4  @Transactional on Custom*RepositoryImpl (main).
+#   REP-8  a bulk delete named `deleteAllBy*` in Custom*RepositoryImpl (main).
 #   REP-10 PageImpl( (main).
 #   REP-14 @Column(… unique = true …) (main).
 #   REP-15 @ManyToOne without FetchType.LAZY (main). Blind spot: an annotation whose arguments span lines.
 #   REP-27 @SQLRestriction / @SQLDelete / @Where( (main).
-#   REP-30 a bulk delete named `deleteAllBy*` in Custom*RepositoryImpl (main).
 #   TST-6  @DisplayName (test).
-#   TST-7  restoreSharedDoubles (test).
 #   TST-21 stdlib `assert(` and JUnit/kotlin.test assertEquals/assertTrue/assertFalse/assertNull/
 #       assertNotNull/assertThrows (test).
+#   TST-26 restoreSharedDoubles (test).
 #   TST-27 `relaxed = true` (test).
 #   TST-33 @DirtiesContext / @TestPropertySource / @ActiveProfiles / @WebMvcTest / @DataJpaTest outside
 #       *TestSupport.kt (test). The migration guard test of COV-10 goes in `.convention-lint-ignore`.
@@ -71,12 +81,18 @@ done
 ALL=$(mktemp) MAIN=$(mktemp) TEST=$(mktemp) SRC=$(mktemp) REPO_IMPL=$(mktemp) SVC=$(mktemp) OUT=$(mktemp)
 trap 'rm -f "$ALL" "$MAIN" "$TEST" "$SRC" "$REPO_IMPL" "$SVC" "$OUT"' EXIT
 
-ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-if [ "$#" -gt 0 ]; then
-  for f in "$@"; do case "$f" in *.kt) [ -f "$f" ] && printf '%s\n' "$f" ;; esac; done > "$ALL"
-else
-  cd "$ROOT" || exit 2
-  find . -name '*.kt' -not -path '*/build/*' \( -path '*/src/main/kotlin/*' -o -path '*/src/test/kotlin/*' \) | sort > "$ALL"
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)
+# every argument becomes a ROOT-relative path, whatever the current directory
+for f in "$@"; do
+  case "$f" in *.kt) [ -f "$f" ] || continue ;; *) continue ;; esac
+  case "$f" in */*) d=${f%/*} ;; *) d=. ;; esac
+  f=$(cd "$d" && pwd -P)/${f##*/}
+  printf '%s\n' "${f#"$ROOT"/}"
+done > "$ALL"
+cd "$ROOT" || exit 2
+if [ "$#" -eq 0 ]; then
+  find . -name '*.kt' -not -path '*/build/*' \( -path '*/src/main/kotlin/*' -o -path '*/src/test/kotlin/*' \) |
+      sed 's#^\./##' | sort > "$ALL"
 fi
 grep -E '(^|/)src/main/kotlin/' "$ALL" > "$MAIN"
 grep -E '(^|/)src/test/kotlin/' "$ALL" > "$TEST"
@@ -89,6 +105,9 @@ grep '/Custom[^/]*RepositoryImpl\.kt$' "$MAIN" > "$REPO_IMPL"
 grep -E 'Service\.kt$|/service/command/' "$MAIN" > "$SVC"
 
 g() { [ -s "$1" ] && tr '\n' '\0' < "$1" | xargs -0 grep -nHE "$2"; }   # file-list, pattern → file:line:content
+# 한글 음절(U+AC00–U+D7A3)의 UTF-8 바이트 패턴 — C 로케일 grep 으로 쓴다. GNU grep 3.11 은 C.UTF-8 에서
+# [가-힣] 범위를 "Invalid collation character" 로 거부해 검사가 조용히 빠진다
+HANGUL=$(printf '(\352[\260-\277]|[\353\354][\200-\277]|\355[\200-\236])')
 fmt() { awk -v m="$1" -F: '{print $1 ":" $2 ": " m}' >> "$OUT"; }
 
 ANNOT_END='(\(|[[:space:]]|$)'                               # annotation not a prefix of a longer one
@@ -122,7 +141,7 @@ g "$MAIN" "$LISTENER" | grep -vE 'AFTER_ROLLBACK|AFTER_COMPLETION|fallbackExecut
     fmt '[SVC-34] AFTER_COMMIT/BEFORE_COMMIT listener without fallbackExecution = true'
 g "$MAIN" '@Column\([^)]*unique[[:space:]]*=[[:space:]]*true' | fmt '[REP-14] @Column(unique = true) — declare a named @Table(uniqueConstraints), none on a soft-delete column'
 g "$MAIN" '@ManyToOne([[:space:]]|$|\([^)]*\))' | grep -v 'FetchType\.LAZY' | fmt '[REP-15] @ManyToOne without fetch = FetchType.LAZY — the JPA default is EAGER'
-g "$REPO_IMPL" 'fun deleteAllBy'          | fmt '[REP-30] bulk delete named deleteAllBy* — name it bulkDeleteBy*'
+g "$REPO_IMPL" 'fun deleteAllBy'          | fmt '[REP-8] bulk delete named deleteAllBy* — name it bulkDeleteBy*'
 
 BASE_PACKAGE=${BASE_PACKAGE:-}
 if [ -z "$BASE_PACKAGE" ]; then
@@ -143,12 +162,65 @@ g "$MAIN" 'LoggerFactory|KotlinLogging\.logger' |
     grep -vE ':[0-9]+:[[:space:]]*private val log = KotlinLogging\.logger' |
     { if [ -n "$LOGGER_BASE" ]; then grep -vF "$LOGGER_BASE"; else cat; fi; } |
     fmt '[STY-1] use the project logger idiom (inherited `logger`) — never LoggerFactory or a per-class KotlinLogging.logger'
-g "$MAIN" '"[^"]*[가-힣]' | sed -E 's#[[:space:]]//[[:space:]].*$##' |
-    grep -E ':[0-9]+:.*(throw [A-Z][A-Za-z]*\(|[^.A-Za-z_](require|check|requireNotNull|checkNotNull|error)\().*"[^"]*[가-힣]' |
+LC_ALL=C g "$MAIN" "\"[^\"]*$HANGUL" | LC_ALL=C sed -E 's#[[:space:]]//[[:space:]].*$##' |
+    LC_ALL=C grep -E ":[0-9]+:.*(throw [A-Z][A-Za-z]*\\(|[^.A-Za-z_](require|check|requireNotNull|checkNotNull|error)\\().*\"[^\"]*$HANGUL" |
     fmt '[SVC-13] thrown message must be English — Korean belongs in the line comment'
 
 HIST='(//|/\*\*|^[[:space:]]*\*).*(기존에는|예전에는|이전에는|바뀌었다|옮겼다|대체했다)'
 g "$SRC" "$HIST" | fmt '[STY-17] comment states history — current state only; history goes to the commit body'
+
+# STY-12: one awk pass over every source (BSD awk has no ENDFILE, so a file is judged when the next starts).
+# Per type: its annotations (the `@` lines right above plus inline ones), its kind (`sealed interface`,
+# `enum class` …), and its header up to the end of the primary constructor and supertype list.
+tr '\n' '\0' < "$SRC" | xargs -0 awk '
+  function supers(h,   n, k, part, out) {                 # " A B " — simple names of the supertypes
+    while (gsub(/\([^()]*\)/, "", h)) ;
+    sub(/\{.*/, "", h)
+    while (gsub(/<[^<>]*>/, "", h)) ;
+    if (!index(h, ":")) return " "
+    h = substr(h, index(h, ":") + 1); sub(/ where .*/, "", h)
+    n = split(h, part, ","); out = " "
+    for (k = 1; k <= n; k++) { sub(/ by .*/, "", part[k]); gsub(/ /, "", part[k]); sub(/.*\./, "", part[k]); out = out part[k] " " }
+    return out
+  }
+  function pairs(i, j) {                                  # may type j share a file with anchor type i?
+    return (kind[i] ~ /sealed/ && index(supers(hdr[j]), " " name[i] " ")) ||
+      (ann[i] ~ /@Entity([^A-Za-z0-9_]|$)/ && idc[i] == name[j]) ||
+      (ann[i] ~ /@Configuration([^A-Za-z0-9_]|$)/ && ann[j] ~ /@ConfigurationProperties([^A-Za-z0-9_]|$)/) ||
+      (kind[i] ~ /(^| )object $/ && kind[j] ~ /(^| )enum class $/)
+  }
+  function flush(   i, j, ok, names) {
+    if (nt < 2) return
+    for (i = 1; i <= nt; i++) {
+      ok = 1
+      for (j = 1; j <= nt; j++) if (j != i && !pairs(i, j)) ok = 0
+      if (ok) return
+    }
+    names = name[1]; for (i = 2; i <= nt; i++) names = names ", " name[i]
+    print f ":" at[2] ": [STY-12] " nt " top-level types (" names ")"
+  }
+  FNR == 1 { if (NR > 1) flush(); f = FILENAME; nt = 0; a = ""; cont = 0 }
+  cont && /^[ )]/ {                                       # the rest of a multi-line declaration header
+    hdr[nt] = hdr[nt] " " $0
+    depth += gsub(/\(/, "(") - gsub(/\)/, ")"); cont = depth > 0 || /,[ ]*$/
+    next
+  }
+  { cont = 0 }
+  /^(@[A-Za-z0-9_.]+(\([^)]*\))? +)*((public|internal|private|protected|abstract|open|final|sealed|data|enum|annotation|value|inline|inner|expect|actual|fun|external) +)*(class|interface|object) +[A-Za-z_]/ {
+    s = $0; sub(/^(@[A-Za-z0-9_.]+(\([^)]*\))? +)*/, "", s)
+    match(s, /(class|interface|object) +[A-Za-z_][A-Za-z0-9_]*/)
+    nm = substr(s, RSTART, RLENGTH); sub(/.* /, "", nm)
+    nt++; at[nt] = FNR; name[nt] = nm; ann[nt] = a " " $0; a = ""
+    kind[nt] = substr(s, 1, RSTART + RLENGTH - 1 - length(nm)); hdr[nt] = substr(s, RSTART + RLENGTH)
+    idc[nt] = ""
+    if (match(ann[nt], /@IdClass\([A-Za-z0-9_.]+::class/)) { idc[nt] = substr(ann[nt], RSTART + 9, RLENGTH - 16); sub(/.*\./, "", idc[nt]) }
+    depth = gsub(/\(/, "(") - gsub(/\)/, ")"); cont = depth > 0 || /,[ ]*$/
+    next
+  }
+  /^@/ || (a != "" && /^[ )]/) { a = a " " $0; next }     # an annotation, or the arguments of a multi-line one
+  { a = "" }
+  END { flush() }
+' >> "$OUT"
 
 g "$REPO_IMPL" "@(Repository|Component)$ANNOT_END" | fmt '[REP-3] stereotype on Custom*RepositoryImpl forbidden — *Impl suffix auto-registers'
 g "$REPO_IMPL" "@Transactional$ANNOT_END"          | fmt '[REP-4] @Transactional on Custom*RepositoryImpl forbidden — transaction boundary belongs to the calling Service'
@@ -157,22 +229,22 @@ g "$TEST" '@DisplayName'                  | fmt '[TST-6] @DisplayName forbidden 
 g "$TEST" '(^|[^.A-Za-z])(assert|assertEquals|assertTrue|assertFalse|assertNull|assertNotNull|assertThrows)\(' |
     fmt '[TST-21] non-AssertJ assertion forbidden — AssertJ assertThat shows actual vs expected'
 g "$TEST" 'relaxed[[:space:]]*=[[:space:]]*true' | fmt '[TST-27] relaxed mock forbidden — strict mocks, relaxUnitFun = true only'
-g "$TEST" 'restoreSharedDoubles'          | fmt '[TST-7] restoreSharedDoubles is obsolete — springmockk clears shared mocks after each test'
+g "$TEST" 'restoreSharedDoubles'          | fmt '[TST-26] restoreSharedDoubles is obsolete — springmockk clears shared mocks after each test'
 g "$TEST" "@(DirtiesContext|TestPropertySource|ActiveProfiles|WebMvcTest|DataJpaTest)$ANNOT_END" | grep -v 'TestSupport\.kt:' |
     fmt '[TST-33] forks the shared Spring context — configure it once in the test support'
 
-IGNORE="$ROOT/.convention-lint-ignore"
+IGNORE=.convention-lint-ignore
 if [ -s "$OUT" ] && [ -f "$IGNORE" ]; then
   KEPT=$(mktemp)
   while IFS= read -r hit; do
-    path=${hit%%:*}; path=${path#"$ROOT"/}; path=${path#./}
-    id=$(printf '%s' "$hit" | sed -E 's/.*\[([A-Z]+-[0-9]+)\].*/\1/')
+    path=${hit%%:*}; id=${hit#*: \[}; id=${id%%\]*}
     drop=0
-    while IFS= read -r entry; do
+    while IFS= read -r entry || [ -n "$entry" ]; do
       case "$entry" in ''|'#'*) continue ;; esac
-      pat=${entry%:*}; pat=${pat#./}; eid=${entry##*:}
+      pat=${entry%:*}; pat=${pat#./}
+      case "${entry##*:}" in "$id"|'*') ;; *) continue ;; esac
       # shellcheck disable=SC2254
-      case "$path" in $pat) [ "$eid" = "$id" ] && { drop=1; break; } ;; esac
+      case "$path" in $pat) drop=1; break ;; esac
     done < "$IGNORE"
     [ "$drop" -eq 0 ] && printf '%s\n' "$hit"
   done < "$OUT" > "$KEPT"
