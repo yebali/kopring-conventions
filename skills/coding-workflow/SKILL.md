@@ -1,6 +1,6 @@
 ---
 name: coding-workflow
-description: "Use when starting ANY coding task in a Kotlin Spring Boot repository — implementing, refactoring, fixing bugs, writing or running tests, exploring code, or auditing — before the first code read or edit, and before dispatching ANY subagent. Sets the always-on baseline: apply the kopring-conventions rules while writing, run the lint before saying done, and plan, tier and review parallel subagent work."
+description: "Use when starting ANY coding task in a Kotlin Spring Boot repository — implementing, refactoring, fixing bugs, writing or running tests, or exploring code — before the first code read or edit, and before dispatching ANY subagent. Sets the always-on baseline: apply the kopring-conventions rules while writing, run the lint before saying done, and plan, tier and review parallel subagent work."
 ---
 
 # Coding Workflow — Always-On Baseline
@@ -9,7 +9,7 @@ Loaded at the start of every coding task. It owns the cross-cutting execution po
 
 ## Write it right the first time
 
-The `check-conventions` skill catches what slipped through; it should find little. Before writing Kotlin, read the Hard Rules table of every `kopring-conventions` reference you touch and apply it while writing, not afterwards. The rules an audit reports most often are the code-style Hard Rules ([code-style.md](../kopring-conventions/references/code-style.md) §1), the comment policy (STY-16–18, §5), single-use intermediates (STY-19, §6), method shape (STY-21–24, §8), standard library first (STY-26, §9), and the plain option (STY-27–28, §10). The references own the rule text; put the rule IDs (`STY-19`, `SVC-15`, …) into every subagent prompt that edits Kotlin.
+The `check-conventions` skill catches what slipped through; it should find little. Before writing Kotlin, load the Hard Rules table of every `kopring-conventions` reference you touch ([Before writing code](../kopring-conventions/SKILL.md#before-writing-code) shows how to load §1 alone) and apply it while writing, not afterwards. Check its [Rules most often broken](../kopring-conventions/SKILL.md#rules-most-often-broken) before you finish.
 
 **Before you say done**:
 1. `bash <kopring-conventions>/scripts/convention-lint.sh <touched .kt files>` and `bash <kopring-conventions>/scripts/blank-line-before-return.sh <touched .kt files>` — both `total: 0`. Exit 2 means no file was scanned; fix the file list.
@@ -34,8 +34,12 @@ When you dispatch:
 - Give shared files a single owner (the session or one agent): Flyway migration versions, permission or access tables, the dependency version catalog, and any Service class that two units would edit.
 - Agents edit only. The session runs the build once after they finish, because concurrent Gradle runs in one tree contend for the lock.
 - Every edit unit's prompt carries the rule IDs (`STY-19`, `SVC-15`, …) and the reference section it must apply — never assume the agent knows the rules — and forbids `git commit`, Gradle runs, and files outside the unit's list.
-- Read-only units use `subagent_type: Explore`; edit units use `general-purpose` or `worker`.
-- Tier every unit: locate/list or a pinned literal edit → `model: haiku`; a read-and-summarize `Explore` or frozen-spec implementation → `model: sonnet`; authorization, transaction and lock boundaries, migrations, design → inherit the session model. A unit that fails on a cheaper tier is re-dispatched one tier up (`retier:`) with the exact mismatch in the prompt.
+- Read-only units use `subagent_type: Explore`; edit units use `general-purpose`.
+- Tier every unit. This list is the single source for every skill; the others cite it:
+  - `model: haiku` — locate or list, or a pinned literal edit.
+  - `model: sonnet` — a read-and-summarize `Explore` whose candidates the session verifies before acting on them, or a frozen-spec implementation (including tests written from a fixed case list).
+  - inherit the session model (omit `model`) — rule judgment whose output is applied as given, wording choices (doc edits, KDoc text), authorization, transaction and lock boundaries, migrations, design.
+- A unit that fails, returns empty or misses the spec is re-dispatched one tier up (haiku → sonnet → inherit; an inheriting unit as is) with the exact mismatch in the prompt (`retier:`).
 - **Cap every report** in the prompt (e.g. ≤30 lines, `file:line` + one-line finding, no restating the prompt) — the report lands in the session context.
 
 ### Review against the plan

@@ -16,7 +16,7 @@ Reconcile the repository's markdown **docs** against the **code** and **auto-app
 - **Output language**: write the report in the user's language; headings stay in English.
 - **Dispatch**: one read-only `Explore` subagent per scope, all dispatched in one single message. If a subagent lacks a tool, instruct a Bash `find`/`grep` fallback (use `grep -F` or bracketed classes for patterns containing a paren).
 - **Scopes are derived from the filesystem on every run** — never from a remembered list.
-- **Model tiering**: scope agents that compare docs against code run with `model: sonnet`; the structural agent (Phase 2B) and every edit-applying agent inherit the session model, because they choose wording. A failed or empty agent is re-dispatched one tier up (sonnet → inherit).
+- **Model tiers and retries**: [coding-workflow](../coding-workflow/SKILL.md#parallel-dispatch--model-tiering) owns them. Phase 2 scope agents and Phase 2B batch agents return candidates the session merges → `model: sonnet`; edit-applying agents choose wording → inherit.
 - **Report skeleton**: an English `## … result` heading, severity-tagged sections highest first, then the items that need a human.
 
 ## Operating principle
@@ -67,11 +67,15 @@ Merge all agents' findings before Phase 2B.
 
 ## Phase 2B — Structural health check (docs vs. docs)
 
-Phase 2 compares docs ↔ code; 2B compares docs against **each other and themselves**. Run it after Phase 2; a single Explore agent covers it (inherently cross-scope; structural judgment → omit `model`, inherit).
+Phase 2 compares docs ↔ code; 2B compares docs against **each other and themselves**. Run it after Phase 2. The session measures sizes itself (§1); duplication and redundancy (§2, §3) fan out by batch:
+
+- Split the doc set into batches of ≤ ~200 KB (`wc -c`), keeping a directory's docs together, and dispatch one `Explore` agent per batch in one message.
+- Give every agent the heading index of the whole set (`grep -nE '^#{1,3} ' <docs>`) so it can check a block against a same-topic section outside its batch.
+- Each agent returns candidate clusters (`file:line` ranges per copy, similarity, topic) and its §3 items; the session merges clusters that share a block across batches, then picks each cluster's canonical owner.
 
 ### 1. Oversized documents (split candidates)
 
-Measure each `.md`: total lines; distinct `#`/`##` topics; whether sections describe unrelated domains. Flag as a split candidate when: more than ~600 lines, OR 4+ unrelated top-level topics, OR a single H2 over ~250 lines that stands alone. For each, propose target filenames and scope, which sections move, the cross-references to redirect, and a stub to leave behind.
+Measure each `.md` with bash in the session: total lines (`wc -l`), `#`/`##` topics (`grep -cE '^##? '`), and each H2's line span (`grep -n '^## '`); then read the headings of the long ones to judge whether their sections describe unrelated domains. Flag as a split candidate when: more than ~600 lines, OR 4+ unrelated top-level topics, OR a single H2 over ~250 lines that stands alone. For each, propose target filenames and scope, which sections move, the cross-references to redirect, and a stub to leave behind.
 
 **Apply policy**: splitting is a naming decision — do NOT auto-split. Record it in `Items to confirm`. Apply only if the user approved a specific split this session.
 
@@ -101,7 +105,7 @@ Classify internally (for ordering, reporting and flagging what cannot be auto-fi
 - 🟡 **Stale details** — renamed classes, moved files, outdated examples, small factual errors. Apply.
 - ⚪ **Judgment calls** — apply the most-likely-correct interpretation from the code; if truly undecidable, leave it untouched and record it in `Items to confirm`.
 
-Edit rules: preserve each doc's structure, tone and formatting; don't remove sections unless the referenced code is gone; mirror the existing ordering and heading style when adding; update all docs touched by one change in the same pass. For efficiency, dispatch **one worker agent per scope** in parallel to apply that scope's fixes (root-scope cross-link fixes belong to the root worker; edit-applying agents inherit the session model). Merge the worker outputs into the summary. After all moved topics and incoming references are updated, run the repository's docs check script if it has one.
+Edit rules: preserve each doc's structure, tone and formatting; don't remove sections unless the referenced code is gone; mirror the existing ordering and heading style when adding; update all docs touched by one change in the same pass. For efficiency, dispatch **one `general-purpose` agent per scope** in parallel to apply that scope's fixes (root-scope cross-link fixes belong to the root scope's agent). Merge their outputs into the summary. After all moved topics and incoming references are updated, run the repository's docs check script if it has one.
 
 ## Phase 4 — Report
 

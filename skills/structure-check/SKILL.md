@@ -5,7 +5,7 @@ description: Use when the user wants to find Kotlin Spring Boot code that follow
 
 # Structure Check — code ↔ structural-health Audit (PLAN ONLY)
 
-Find production code that is **hard to work in** — low cohesion, tangled configuration, one-off structures where a general one would do — and hand the result to another model as a refactoring plan document. This skill operates on the **code ↔ structural health** axis. `<kopring-conventions>` below means the `kopring-conventions` skill's directory; its `references/` hold the rules.
+Find production code that is **hard to work in** — low cohesion, tangled configuration, one-off structures where a general one would do — and hand the result to another model as a refactoring plan document. This skill operates on the **code ↔ structural health** axis. `<kopring-conventions>` below means the `kopring-conventions` skill's directory; its `references/` hold the rules. `<structure-check>` means this skill's directory.
 
 **Why this is a separate axis, not part of `check-conventions`**: `check-conventions` is rule-bound by construction — it reports what a documented rule forbids. The findings this skill exists for **violate no rule**. A service injecting 49 dependencies, a setting whose effective value is assembled from four layers, a bespoke executor where a synchronous call fits — every one of those passes a convention audit clean. Nothing else looks for them.
 
@@ -19,7 +19,7 @@ Find production code that is **hard to work in** — low cohesion, tangled confi
 
 ## Scope — the request names a module
 
-Valid module names are read from `settings.gradle.kts` **on every run** — never from a list written here, so a module added tomorrow is accepted tomorrow. `scripts/structure-metrics.sh` performs the same validation and is the executable source of truth for it.
+Valid module names are read from `settings.gradle.kts` **on every run** — never from a list written here, so a module added tomorrow is accepted tomorrow. `<structure-check>/scripts/structure-metrics.sh` performs the same validation and is the executable source of truth for it.
 
 - **empty** → the whole repository (every module's `src/main`).
 - **a module name** → that module's `src/main` only.
@@ -33,13 +33,13 @@ Always excluded: `build/`, generated sources, and `*Test.kt` — test structure 
 
 ## Tooling & parallelism
 
-- **Hotspot ranking has a dedicated script** — `scripts/structure-metrics.sh`. Run it in Phase 0 instead of having agents eyeball a directory. The metric inventory, each metric's exemptions, and its blind spots live in the **script's header comment — the single source of truth**; do not re-enumerate them here.
+- **Hotspot ranking has a dedicated script** — `<structure-check>/scripts/structure-metrics.sh`. Run it in Phase 0 instead of having agents eyeball a directory. The metric inventory, each metric's exemptions, and its blind spots live in the **script's header comment — the single source of truth**; do not re-enumerate them here.
 - Scan agents are read-only — they detect and report candidates; they never edit and never design fixes. `Explore` (which has no `Edit`) fits exactly.
 
 ## Phase 0 — Resolve scope → rank hotspots → derive partitions
 
 1. **Resolve the scope** from the request per the Scope section above. An unrecognized module stops the run here.
-2. **Rank hotspots**: `bash scripts/structure-metrics.sh --top [module]` (path relative to this skill's directory). This prints a leaderboard per metric (`deps` · `xdomain` · `funs` · `depth` · `cfg` · `loc`). The **union of those lists is the hotspot set**. Record it — Phase 3 checks findings against it, and Phase 4 quotes it as evidence. `BASE_PACKAGE`, `DOMAIN_SEGMENTS` and `SHARED_RE` tune the `xdomain` metric (see the script header).
+2. **Rank hotspots**: `bash <structure-check>/scripts/structure-metrics.sh --top [module]`, run from the project's repository. This prints a leaderboard per metric (`deps` · `xdomain` · `funs` · `depth` · `cfg` · `loc`). The **union of those lists is the hotspot set**. Record it — Phase 3 checks findings against it, and Phase 4 quotes it as evidence. `BASE_PACKAGE`, `DOMAIN_SEGMENTS` and `SHARED_RE` tune the `xdomain` metric (see the script header).
 3. **Derive partitions dynamically** from the filesystem: one partition per in-scope module, and for a large module one partition per top-level domain directory under its base package. Keep the domain split even when the scope is a single module — it is what preserves the parallelism.
 
 Each partition agent receives **its partition's hotspot rows plus its full file list**. The hotspots say where to look first; the file list is what the partition is accountable for.
@@ -89,11 +89,11 @@ why it costs: <what is harder to do because of it>
 evidence: <the metric row, grep hit, or quoted lines that back the claim>
 ```
 
-**Model tiering**: `model: sonnet` — structural candidates a later gate verifies: the script pins the targets, the five checks pin the patterns, and **Phase 3 verifies every surviving candidate against the real code**.
+**Model tiering** (per [coding-workflow](../coding-workflow/SKILL.md#parallel-dispatch--model-tiering)): `model: sonnet` — structural candidates a later gate verifies: the script pins the targets, the five checks pin the patterns, and **Phase 3 verifies every surviving candidate against the real code**.
 
 ### Partition completeness — verify, never skip silently
 
-After the agents return, confirm **every partition produced a valid structured report**. A partition that errored, returned nothing, or listed no inspected files is a **failed partition** — it did not cover its domain. Re-dispatch each failed partition **without `model`** before proceeding. A zero-candidate report that shows its inspected file list is a valid result, not a failure. Never report while a partition is unaccounted for.
+After the agents return, confirm **every partition produced a valid structured report**. A partition that errored, returned nothing, or listed no inspected files is a **failed partition** — it did not cover its domain. Re-dispatch each failed partition one tier up (**without `model`**) before proceeding. A zero-candidate report that shows its inspected file list is a valid result, not a failure. Never report while a partition is unaccounted for.
 
 ## Phase 3 — Session model: filter, verify, rank
 

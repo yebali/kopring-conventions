@@ -3,7 +3,7 @@
 # Report-only — never edits. Invoked from structure-check Phase 0; also usable
 # standalone from anywhere inside the repo.
 #
-#   bash structure-metrics.sh                 # full TSV, every module's src/main
+#   bash structure-metrics.sh                 # full TSV, every included module's src/main
 #   bash structure-metrics.sh orders          # full TSV, that module only
 #   bash structure-metrics.sh --top           # per-metric leaderboards (what Phase 0 reads)
 #   bash structure-metrics.sh --top orders
@@ -68,7 +68,8 @@
 #            file's effective behaviour depends on something other than its own
 #            source, which is what makes it worth a human read.
 #
-# Scope: production sources only (`*/src/main/**`). Tests are deliberately out —
+# Scope: production sources only (`src/main/**` of the root project and of each module
+# settings.gradle(.kts) includes; an unincluded directory is never scanned). Tests are deliberately out —
 # test structure is owned by the testing / test-coverage references.
 
 set -uo pipefail
@@ -86,28 +87,29 @@ for arg in "$@"; do
   esac
 done
 
-# validate the module against settings.gradle(.kts) — never against a hardcoded list,
-# so a newly added module is accepted the day it is added.
+# modules come from settings.gradle(.kts) — never from a hardcoded list or a directory
+# walk — so a newly added module counts the day it is added, and a directory that is
+# not built (a commented-out include) never does. `//` comments are stripped first.
+modules=$(sed 's#//.*##' settings.gradle.kts settings.gradle 2>/dev/null |
+  grep -oE "include\(?[[:space:]]*[\"'][^\"']+[\"']" |
+  sed -E "s/include\(?[[:space:]]*[\"']:?([^\"']+)[\"']/\1/")
+
 if [ -n "$module" ]; then
-  valid=$(grep -hoE "include\(?[[:space:]]*[\"'][^\"']+[\"']" settings.gradle.kts settings.gradle 2>/dev/null |
-    sed -E "s/include\(?[[:space:]]*[\"']:?([^\"']+)[\"']/\1/")
-  if ! printf '%s\n' "$valid" | grep -qx "$module"; then
+  if ! printf '%s\n' "$modules" | grep -qx "$module"; then
     echo "unknown module: $module" >&2
     echo "valid modules:" >&2
-    printf '  %s\n' $valid >&2
+    printf '  %s\n' $modules >&2
     exit 2
   fi
-  search_root="$module/src/main"
-  [ -d "$search_root" ] || { echo "no src/main in $module" >&2; exit 2; }
+  roots="$module/src/main"
+  [ -d "$roots" ] || { echo "no src/main in $module" >&2; exit 2; }
 else
-  search_root=""
+  # the root project plus every included module (`:a:b` lives in a/b)
+  roots=$(for m in $modules; do [ -d "${m//://}/src/main" ] && echo "${m//://}/src/main"; done
+    [ -d src/main ] && echo src/main)
 fi
 
-if [ -n "$search_root" ]; then
-  files=$(find "$search_root" -name '*.kt' -type f | sort)
-else
-  files=$(find . -path '*/src/main/*' -name '*.kt' -type f -not -path './build/*' | sed 's#^\./##' | sort)
-fi
+files=$([ -n "$roots" ] && find $roots -name '*.kt' -type f | sort)
 
 [ -n "$files" ] || { echo "no production Kotlin files found" >&2; exit 2; }
 
@@ -120,39 +122,52 @@ bp_re=$(printf '%s' "$BASE_PACKAGE" | sed 's/\./\\./g')
 dom_cut=$(( $(printf '%s' "$BASE_PACKAGE" | tr -cd . | wc -c) + 1 + ${DOMAIN_SEGMENTS:-2} ))
 shared_re=${SHARED_RE:-'(^|\.)(common|core|shared|util|config|client|infra)(\.|$)'}
 
+# Every file goes through one wc and one awk — a per-file loop forks ~10 processes per
+# file. The SHARED_RE filter runs once, with grep -E, over the set of every imported
+# domain prefix; awk then only looks prefixes up in that set.
 emit_rows() {
-  printf '%s\n' "$files" | while IFS= read -r f; do
-    [ -n "$f" ] || continue
+  local allowed
+  allowed=$(printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 grep -hE "^import ${bp_re}\." |
+    awk '{print $2}' | cut -d. -f1-"$dom_cut" | sort -u | grep -vE "$shared_re")
 
-    loc=$(wc -l < "$f" | tr -d ' ')
+  printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 wc -l |
+    BP="$BASE_PACKAGE" ALLOWED="$allowed" awk -v n="$dom_cut" '
+      # cut -d. -f1-n
+      function prefix(s,   p, k, i, r) {
+        k = split(s, p, "[.]"); if (k <= n) return s
+        r = p[1]; for (i = 2; i <= n; i++) r = r "." p[i]; return r
+      }
+      BEGIN {
+        k = split(ENVIRON["ALLOWED"], t, "\n"); for (i = 1; i <= k; i++) ok[t[i]] = 1
+        pkg = "package " ENVIRON["BP"] "."; imp = "import " ENVIRON["BP"] "."
+      }
+      {
+        loc = $1; f = $0; sub(/^[[:space:]]*[0-9]+[[:space:]]/, "", f)
+        if (f == "total") next  # wc summary line
+        deps = funs = depth = cfg = inctor = done = havepkg = ni = xdomain = 0; own = ""
+        split("", imps); split("", seen)
+        while ((getline line < f) > 0) {
+          # deps: primary-constructor property count; stops at the line closing the ctor
+          if (!done && line ~ /^(class |internal class |abstract class |open class |sealed class )/ && line ~ /\($/) inctor = 1
+          else {
+            if (inctor && line ~ /^[[:space:]]*\)/) { inctor = 0; done = 1 }
+            if (inctor && line ~ /private val /) deps++
+          }
 
-    # primary-constructor property count; stops at the line closing the ctor
-    deps=$(awk '
-      /^(class |internal class |abstract class |open class |sealed class )/ && /\($/ && !done { inctor=1; next }
-      inctor && /^[[:space:]]*\)/ { inctor=0; done=1 }
-      inctor && /private val / { c++ }
-      END { print c+0 }
-    ' "$f")
+          if (line ~ /^[[:space:]]*(private |internal |protected |public |suspend |override |open |abstract |inline |operator )*fun /) funs++
 
-    funs=$(grep -cE '^[[:space:]]*(private |internal |protected |public |suspend |override |open |abstract |inline |operator )*fun ' "$f")
+          # own domain prefix, then the domain prefixes imported
+          if (!havepkg && index(line, pkg) == 1) { split(line, a); own = prefix(a[2]); havepkg = 1 }
+          if (index(line, imp) == 1) { split(line, a); imps[++ni] = prefix(a[2]) }
 
-    # own 3-segment package prefix, then distinct other domain prefixes imported
-    own=$(grep -m1 -E "^package ${bp_re}\." "$f" | awk '{print $2}' | cut -d. -f1-"$dom_cut")
-    xdomain=$(grep -E "^import ${bp_re}\." "$f" \
-      | awk '{print $2}' | cut -d. -f1-"$dom_cut" \
-      | grep -vE "$shared_re" \
-      | grep -vx "$own" | sort -u | wc -l | tr -d ' ')
+          if (line !~ /^[[:space:]]*$/) { match(line, /^[ ]*/); d = RLENGTH / 4; if (d > depth) depth = d }
 
-    depth=$(awk '
-      /^[[:space:]]*$/ { next }
-      { match($0, /^[ ]*/); d = RLENGTH / 4; if (d > m) m = d }
-      END { print int(m)+0 }
-    ' "$f")
-
-    cfg=$(grep -cE '@ConditionalOn|@Profile|@Qualifier|ObjectProvider|@Async|Propagation\.|inNewTx' "$f")
-
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$loc" "$deps" "$funs" "$xdomain" "$depth" "$cfg" "$f"
-  done
+          if (line ~ /@ConditionalOn|@Profile|@Qualifier|ObjectProvider|@Async|Propagation\.|inNewTx/) cfg++
+        }
+        close(f)
+        for (i = 1; i <= ni; i++) if ((imps[i] in ok) && imps[i] != own && !(imps[i] in seen)) { seen[imps[i]] = 1; xdomain++ }
+        printf "%s\t%d\t%d\t%d\t%d\t%d\t%s\n", loc, deps, funs, xdomain, int(depth), cfg, f
+      }'
 }
 
 rows=$(emit_rows)

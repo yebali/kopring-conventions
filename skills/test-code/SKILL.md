@@ -14,12 +14,12 @@ Read [testing.md](../kopring-conventions/references/testing.md) (`TST-N`, how a 
 ## Method
 
 - **Output language**: write the summary in the user's language.
-- **Dispatch**: for 2+ changed classes follow the dispatch rules and model tiering of [coding-workflow](../coding-workflow/SKILL.md#parallel-dispatch--model-tiering). Read-only scan units are `Explore` subagents dispatched in one single message; edit units are `general-purpose` or `worker`. A single changed class is handled inline.
+- **Dispatch**: up to 5 changed classes are handled inline. From 6 up, follow the dispatch rules and model tiers of [coding-workflow](../coding-workflow/SKILL.md#parallel-dispatch--model-tiering): read-only scan units are `Explore` subagents dispatched in one single message; edit units are `general-purpose`.
 
 ## Steps
 
-1. **Scope from the branch**: detect the base branch and take committed-since-base ∪ working-tree ∪ untracked changes exactly as [check-conventions Phase 0](../check-conventions/SKILL.md#phase-0--determine-the-in-scope-file-set) does — `git diff` and `git status` alone miss the commits already on the branch. Identify every changed or newly added Controller endpoint and Service method, and report the detected base.
-2. **Source cross-reference** (COV-1 / COV-3): for each changed Controller or Service, list its public endpoints or methods, cross-reference the existing `*Test.kt`, and target the untested ones first — do not add redundant coverage. When 2+ classes changed, fan this out with one `Explore` subagent per class.
+1. **Scope from the branch**: `bash <kopring-conventions>/scripts/changed-files.sh` prints the changed paths (committed since the base ∪ working tree ∪ untracked) on stdout and `base: <branch>` on stderr — `git diff` and `git status` alone miss the commits already on the branch. Identify every changed or newly added Controller endpoint and Service method, and report the detected base.
+2. **Source cross-reference** (COV-1 / COV-3): for each changed Controller or Service, list its public endpoints or methods, cross-reference the existing `*Test.kt`, and target the untested ones first — do not add redundant coverage. At 6+ changed classes, fan this out with one `Explore` subagent per class.
 3. **Write tests** per the TST rules:
    - **Controller tests** call the real endpoint through `mockMvc` and verify the **HTTP contract** (status, response schema, error code). Apply the full COV-1 parameter-variation matrix to each changed endpoint.
    - **Service tests** (COV-3) cover each changed public Service method — including one reached only from a listener or scheduler — with a success test asserting a business effect (a pure-mapping create is exempt) and one failure test per domain exception it throws. State effects are asserted here, not in the controller test. When fanning out test *writing*, partition per **module**, not per class — concurrent agents in one module conflict on the module's shared test base class (TST-2 / TST-3). Each writing unit's prompt carries the TST/COV rule IDs and forbids `git commit`, Gradle runs and files outside its list.
