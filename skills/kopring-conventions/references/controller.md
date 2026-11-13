@@ -217,6 +217,7 @@ Body DTO, sealed interface and controller parameter examples: [examples](example
 - the server owns the decision: a permission verdict (the frontend must not copy the permission matrix), and any value judged against the current time (`isExpired`, `isOverdue`) — the client's clock is not the server's;
 - the frontend cannot know the rule behind it: a price, discount, tax or other policy calculation that lives only on the server, or one that rounds;
 - the frontend lacks the value set it ranges over: the zero counts of CTL-13, because the frontend holds no copy of the backend enum;
+- the value is the overall progress of a job, sent next to its parts' progress: the server decides how the parts add up, and every screen showing the job shows the same number;
 - the field belongs to the shared `PaginationResponse` (CTL-11): its page metadata (`first`, `last`, `totalPages`, …) is one shared contract, not a per-endpoint choice.
 
 ❌ `ListOrderItemResponse(items, itemCount, totalQuantity)` → ✅ `ListOrderItemResponse(items)`

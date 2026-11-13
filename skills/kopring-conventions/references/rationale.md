@@ -194,7 +194,7 @@ The client needs to learn every bad id in one round trip. It is not extracted in
 - **Only what the frontend reads** — every field is a contract: it has to be documented, kept in sync and kept compatible. An unread field costs that upkeep for nothing, and adding one later is a one-line change.
 - **Direct removal** — the frontend and backend ship as one team; a deprecation phase keeps a dead field alive for a release nobody waits for. Telling the frontend developers in the same change replaces it. A field another deployable reads is code-consumed and is out of this rule's scope.
 - **No derivable values** — a value sent next to its inputs can disagree with them, and the frontend must choose which to believe. Computing it from the inputs leaves one source of truth.
-- **Exceptions** — a permission verdict, a server-time judgement and a rule the frontend cannot see have a single correct owner, the server; recomputing them on the client duplicates logic that then drifts.
+- **Exceptions** — a permission verdict, a server-time judgement and a rule the frontend cannot see have a single correct owner, the server; recomputing them on the client duplicates logic that then drifts. A job's overall progress is the same case: how the parts add up is the server's choice, and a screen that summed them itself would show a number the server never defined.
 
 ### CTL-13 Count responses include zero counts
 
