@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Self-check for the lint scripts. Builds a throwaway git repo from fixtures/ (each fixtures/<module>/*.kt
-# lands in <module>/src/main/kotlin/x/), runs the scripts in it and compares their hits with the
+# lands in <module>/src/main/kotlin/x/) and tree/ (copied as is, for the checks that read a path:
+# controller/rest/, src/test/), runs the scripts in it and compares their hits with the
 # `// HIT <ID>` markers in the fixtures. Prints PASS/FAIL per case; exits 1 on any failure.
 #
 #   bash scripts/tests/run.sh
@@ -15,6 +16,7 @@ for dir in "$HERE"/fixtures/*/; do
   m=${dir%/}; m=${m##*/}
   mkdir -p "$m/src/main/kotlin/x" && cp "$dir"*.kt "$m/src/main/kotlin/x/"
 done
+cp -R "$HERE/tree/." .
 cp "$HERE/fixtures/convention-lint-ignore" .convention-lint-ignore
 commit() { git -c user.name=t -c user.email=t@t -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -qm "$1"; }
 git init -q && git symbolic-ref HEAD refs/heads/main && git add -A && commit base
@@ -51,10 +53,22 @@ check "STY-12 message" "$(marks STY-12 $X/TwoClasses.kt | tr -d ' '): [STY-12] 2
 # SVC-13 — Hangul in a thrown message, matched as UTF-8 bytes so GNU grep in C.UTF-8 does not drop it
 check "SVC-13 KoreanMessage" "$(marks SVC-13 $X/KoreanMessage.kt)" "$(hits SVC-13 convention-lint.sh $X/KoreanMessage.kt)"
 
+# one fixture per rule family — every `// HIT <ID>` line is a hit and every other line is clean
+ANY='[A-Z]+-[0-9]+'
+for c in BeanRules PlainService Auditor PaymentService Product FooProperties BarProperties OrderRepository OrderController MemberController \
+    CustomOrderRepositoryImpl \
+    controller/rest/GetOrderResponse; do
+  check "lint $c" "$(marks "$ANY" $X/$c.kt)" "$(hits "$ANY" convention-lint.sh $X/$c.kt)"
+done
+check "lint test sources" "$(marks "$ANY" m/src/test/kotlin/x/OrderServiceTest.kt)" "$(hits "$ANY" convention-lint.sh m/src/test/kotlin/x/OrderServiceTest.kt)"
+
 # .convention-lint-ignore — a path:ID entry from a module directory, and `legacy/*:*` over the whole tree
 check "ignore from a module dir, relative paths" "$(marks REP-10 $X/PagedKept.kt)" \
   "$(cd m && hits '[A-Z]+-[0-9]+' convention-lint.sh src/main/kotlin/x/Paged.kt src/main/kotlin/x/PagedKept.kt)"
-check "whole tree: convention-lint hits = markers (legacy/* ignored)" "$(marks 'REP-10|STY-12|SVC-13' $X/*.kt)" "$(hits '[A-Z]+-[0-9]+' convention-lint.sh)"
+# every marker but STY-10's, which belongs to blank-line-before-return.sh
+check "whole tree: convention-lint hits = markers (legacy/* ignored)" \
+  "$(find m -name '*.kt' -exec grep -nE "// HIT $ANY\$" {} /dev/null \; | grep -v 'HIT STY-10$' | cut -d: -f1,2 | LC_ALL=C sort | tr '\n' ' ')" \
+  "$(hits "$ANY" convention-lint.sh)"
 check "whole tree: STY-10 hits = markers (legacy/* ignored)" "$(marks STY-10 $X/*.kt)" "$(hits STY-10 blank-line-before-return.sh)"
 
 # changed-files.sh — committed on the branch, modified, untracked; README and the `*`-ignored tree left out

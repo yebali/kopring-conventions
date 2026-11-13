@@ -17,6 +17,7 @@
 | CFG-18 | | A duration property is `Duration` with `@DurationUnit`, keeping its name and env key | [§3](#3-properties-classes) |
 | CFG-19 | | A value operators tune per environment is a property; anything else is a code constant | [§3](#3-properties-classes) |
 | CFG-20 | | The JVM, Hibernate and Jackson time zones are pinned to the application time zone | [§2](#2-environment-values) |
+| CFG-21 | | Every outbound client declares its connect and read timeouts as properties; none runs on a library default | [§2](#2-environment-values) |
 
 Durations in code follow [STY-33](code-style.md#11-time-and-durations).
 
@@ -38,7 +39,9 @@ data class AppProperties(val apiKey: String) {
 
 ✅ `stream-replicas: ${STREAM_REPLICAS:1}` in the yml, read by a properties class — ❌ a `\${app.foo:1}` that exists only in Kotlin and has no yml declaration.
 
-**CFG-20** — A `ZonedDateTime` read from a `timestamptz` column carries the zone of `hibernate.jdbc.time_zone`, which defaults to the JVM's, so the offset a client sees depends on the host — `+00:00` in a container, `+09:00` on a laptop — and a value just created can differ in offset from its re-read copy. The deployment sets `TZ` (or `-Duser.timezone`) to the application time zone, and `application.yml` sets `spring.jpa.properties.hibernate.jdbc.time_zone` and `spring.jackson.time-zone` to the same zone. Date boundaries still come from the application zone in code (STY-30), not from the host.
+**CFG-20** — An `Instant` in a `timestamptz` column is the same value on every host ([STY-29](code-style.md#11-time-and-durations)), but whatever derives a date or a wall-clock time still reads a zone: a date boundary computed with a default zone, a formatted timestamp, a log line, a legacy `timestamp` column. The deployment sets `TZ` (or `-Duser.timezone`) to the application time zone, and `application.yml` sets `spring.jpa.properties.hibernate.jdbc.time_zone` and `spring.jackson.time-zone` to the same zone, so none of them depends on the host. Date boundaries still come from the application zone in code (STY-30), not from the host.
+
+**CFG-21** — Every client that leaves the process declares how long it waits to connect and how long it waits for an answer, as `Duration` properties in the yml (CFG-18): HTTP clients (Feign by [CTL-26](controller.md#11-feign-clients), `RestClient` and `WebClient` the same way), Redis, the broker producer (`max.block.ms`, [TX-2](transactions.md#3-external-calls-and-compensation)), SMTP, and the JDBC pool's `connection-timeout`. A library default is not a decision: some wait forever (JavaMail's SMTP timeouts, a JDK HTTP client's read timeout), and one hung peer then holds a request thread — inside a transaction also a pooled connection and its row locks (TX-2) — until the service is restarted.
 
 ## 3. Properties classes
 

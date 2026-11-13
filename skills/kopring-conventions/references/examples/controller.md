@@ -1,6 +1,6 @@
 # Controller — Worked Examples
 
-Rule text, conditions and exceptions live in [controller.md](../controller.md); this file only illustrates them.
+Rule text, conditions and exceptions live in [controller.md](../controller.md); this file only illustrates them. The KDoc summaries of [STY-16](../code-style.md#5-comments-and-kdoc) are left out so the rule shown stays in focus; production code carries them.
 
 ## CTL-5 — Inner data classes and duplication
 
@@ -133,7 +133,7 @@ data class ListOrderItemResponse(
     data class Item(
         val id: UUID,
         val quantity: Int,
-        val deletedAt: ZonedDateTime?,
+        val deletedAt: Instant?,
         val isDeleted: Boolean,      // deletedAt != null
         val internalMemo: String?,   // no screen reads it (CTL-32)
     )
@@ -146,7 +146,7 @@ data class ListOrderItemResponse(
     data class Item(
         val id: UUID,
         val quantity: Int,
-        val deletedAt: ZonedDateTime?,
+        val deletedAt: Instant?,
     )
 }
 
@@ -253,7 +253,7 @@ fun getGroup(@PathVariable groupId: UUID, authUser: AuthUser): GetGroupResponse 
 fun getGroup(command: GetGroupCommand): GetGroupResult {
     val group = getEntity(command.groupId)
 
-    return GetGroupResult.from(group = group, owner = userService.getUser(GetUserCommand(userId = group.owner.id)))
+    return GetGroupResult.from(group = group, owner = userService.getUser(GetUserCommand(userId = group.ownerId)))
 }
 ```
 

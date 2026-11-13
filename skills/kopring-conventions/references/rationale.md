@@ -26,9 +26,9 @@ Spreading a short message lambda across three lines burns vertical space and hur
 
 It visually separates the point where the function ends, which makes a function easier to scan.
 
-### STY-11 Named arguments for multi-argument calls
+### STY-11 Named arguments where position is ambiguous
 
-Prevents argument-order mistakes (especially adjacent same-type parameters) and makes each argument's meaning visible at the call site. `maxOf`/`minOf`/`min`/`max` and vararg calls are exempt: their arguments are interchangeable, so `maxOf(a = x, b = y)` only adds noise.
+A swapped pair of same-typed arguments compiles, and a bare `true` or `10` says nothing at the call site; those are the cases a name prevents. Naming every argument of every call was the earlier rule: it made `foo(id = id, name = name)` the common shape and repeated what the types already separate, so it was narrowed to Kotlin's own coding convention. `maxOf`/`minOf`/`min`/`max` and vararg calls are exempt: their arguments are interchangeable, so `maxOf(a = x, b = y)` only adds noise.
 
 ### STY-19 Inline single-use intermediates
 
@@ -40,13 +40,13 @@ Prevents argument-order mistakes (especially adjacent same-type parameters) and 
 
 ### STY-20 No plumbing parameters
 
-A parameter that only carries a value from the caller to a deeper call encodes "this value comes from there" twice — at the call site and in the signature. A shorter signature also lightens STY-11.
+A parameter that only carries a value from the caller to a deeper call encodes "this value comes from there" twice — at the call site and in the signature.
 
 ### STY-17 Comment policy
 
 **Altitude, not a WHAT/WHY split.** A reader deciding whether to open a file needs the type's role in one line; a reader inside a function only needs help at the lines that are genuinely hard on a first read. Commenting every line buries the lines that need it.
 
-**Why KDoc is minimal but allowed (STY-16)** — background paragraphs sprawl and rot unreviewed. One line of WHAT, written only when a trigger holds, gives the summary without that risk.
+**Why every public declaration gets one line (STY-16)** — a caller should not have to open a body to learn what a public type or function is for, and "only when a trigger holds" left that to each author's reading of the triggers. One line keeps the cost bounded; the requirement that it add a fact the name does not carry is what keeps it from becoming the name restated. Background paragraphs still sprawl and rot unreviewed, so tags and multi-paragraph KDoc stay out, and a private declaration keeps the trigger test.
 
 **WHY / history / invariants stay out of source** — they are never reviewed at commit time and drift from the code; a stale rationale is worse than none. They belong in the commit body, docs, or test names.
 
@@ -77,7 +77,7 @@ A deliberate simplification has a ceiling — a global lock, a full scan, a naiv
 
 ### STY-29 Time zones and timestamps
 
-With `timestamptz` columns, `ZonedDateTime.now()` stores the same instant whatever the JVM zone is — the type is not the risk. The zone matters where a wall-clock value is derived: containers often run in UTC while developer machines run in a local zone, so "today", a numbering year, or a cron firing at 04:00 differ between the two. The application time zone fixes every date boundary and time-of-day schedule, and `ZoneId.systemDefault()` is forbidden because it silently follows the host. `equals` compares zones as well as instants, and `compareTo`, `<` and ordering functions break a tie between equal instants by local date-time and zone; `isBefore`/`isAfter`/`isEqual` and `toInstant()` compare the instant alone. `Instant` stays allowed where an API demands it (Spring `Trigger`) and for in-memory arithmetic.
+A timestamp is a point in time, and `Instant` is that and nothing more: two values are equal when they are the same moment, they order without a tie-break, and no host setting changes what is stored or sent. `ZonedDateTime` was the earlier choice; it carried a zone into every entity and DTO, which needed a comparison rule (`equals` compares zones too), three pinned zone settings to keep the serialized offset stable, and `toInstant()` in every test assertion. The zone still matters where a wall-clock value is derived: containers often run in UTC while developer machines run in a local zone, so "today", a numbering year, or a cron firing at 04:00 differ between the two. The application time zone fixes every date boundary and time-of-day schedule, and `ZoneId.systemDefault()` is forbidden because it silently follows the host. The cost of `Instant` is that a response always carries UTC and the client converts for display.
 
 ### STY-33 Durations as Duration
 
@@ -97,13 +97,21 @@ A failure that is absorbed must still be visible, and only failures whose conseq
 
 Executors from `Executors.new*` inside a bean are invisible to Spring's shutdown, so in-flight work is cut off on redeploy; an unbounded thread-per-task helper turns a burst into thousands of threads. Hand-written retry loops each get their own backoff behavior and their own idea of what is safe to repeat; one shared mechanism with a required retry predicate (STY-45) keeps both uniform. Starting long-running work on `ApplicationReadyEvent` instead of `@PostConstruct` guarantees every bean it calls is ready, and one stop hook keeps shutdown in one place.
 
+### STY-59 Shared bean state
+
+A plain `var` or `HashMap` in a bean passes every single-threaded test and fails only under concurrent requests, as a lost update or a corrupted map that no stack trace points to. Naming the allowed types makes the question "who else writes this?" part of declaring the field, and keeping per-instance memory out of cross-instance decisions stops a second replica from disagreeing with the first.
+
+### STY-60 Exhaustive when
+
+An `else` answers for constants that do not exist yet, so the person adding one is never asked what it should do there. Without it the compiler lists every decision the new constant needs. The mappers already relied on this (SVC-28); the same reasoning holds for every branch on a closed set.
+
 ### STY-47 Files and streams
 
 Mixing `java.io.File` and NIO `Path` means converting back and forth and ignoring the `Boolean` results of `File.delete()`/`mkdirs()`; NIO throws instead. A Result carrying an open `InputStream` leaks the descriptor whenever an exception lands between opening and the controller wrapping it, because nobody owns the close; returning a `Path` or a writer keeps opening and closing in one place.
 
 ### STY-58 · CFG-20 The clock and the zone
 
-A no-argument `now()` makes every date boundary depend on the moment the test runs, so a "today" or year-end rule is tested only on the day it happens to matter. An injected `Clock` lets a test stand on any instant. Pinning the JVM, Hibernate and Jackson zones keeps the offset a client sees from depending on which host served it.
+A no-argument `now()` makes every date boundary depend on the moment the test runs, so a "today" or year-end rule is tested only on the day it happens to matter. An injected `Clock` lets a test stand on any instant. Pinning the JVM, Hibernate and Jackson zones keeps whatever still derives a date or a wall-clock time — a log line, a formatted value, a legacy column — from depending on which host ran it.
 
 ## 2. Naming
 
@@ -189,6 +197,18 @@ A DTO from a shared module cannot get a `toCommand()` (the shared module cannot 
 
 The client needs to learn every bad id in one round trip. It is not extracted into a generic util because the thrown exception differs per domain (SVC-14); extraction would force call sites to inject an exception type. The rule unifies an **idiom**, not a helper.
 
+### SVC-15 One code for structural checks
+
+A named exception and an ErrorCode per length or range check produced dozens of classes no client ever branched on. One shared function and one shared code keep the check a single line; a failure a client must tell apart is by definition a business failure and keeps its own exception. The function is not the stdlib `require`, because answering `IllegalArgumentException` with a 400 would hide a library's or a bug's exception behind a client error.
+
+### SVC-44 Scope from the principal
+
+An id in the request is a claim; the principal is the only identity the server verified. A scope key read from the body or the query lets any signed-in caller name someone else's rows, and no test written from the happy path notices. Answering 404 rather than 403 for an out-of-scope row keeps the endpoint from confirming which ids exist. The rule lived only in the coverage table (COV-1), which told tests what to expect without telling the code how to get there.
+
+### SVC-45 · CTL-34 Bounded input
+
+A length or count nobody checked is still enforced — by the column, the driver's parameter limit or the heap — and reported as a 500 at whatever layer hits it first. Checking in the Command turns it into a 400 that names the field, and reusing the entity's length constant keeps the check from drifting from the column. Spring Data's page cap is 2000 unless set, and it clamps instead of rejecting, so an unset cap silently defines the heaviest request every paged endpoint accepts.
+
 ### CTL-31 · CTL-32 Response fields
 
 - **Only what the frontend reads** — every field is a contract: it has to be documented, kept in sync and kept compatible. An unread field costs that upkeep for nothing, and adding one later is a one-line change.
@@ -222,15 +242,19 @@ The frontend and the backend ship as one team, and the other clients are deploya
 
 Even when each advanced feature is individually justified, the reading cost accumulates — execution order diverges from code order, you have to trace where the commit happens, and failure gets a separate compensation path.
 
-**The gate does not forbid `inTx`** — erasing an existing boundary silently loses dirty checking. What moves is the location of the external call, not the boundary.
+**The gate comes before the Facade** — a single remote read whose answer is only input does not need a second class: the controller makes the call and the Service stays one transaction. A Facade is for what the gate cannot pass.
 
-**Canonical shape the gate cannot pass** — an external call whose argument comes from a DB row and whose result flows back into that row. Hoisting it to the controller would add a round trip just to fetch the argument and leak the use case into the controller. Querying the row twice is a structural cost TX-2 forces, not a violation.
+**Canonical shape the gate cannot pass** — an external call whose argument comes from a DB row and whose result flows back into that row. Hoisting it to the controller would add a round trip just to fetch the argument and leak the use case into the controller. Reading the row in two transactions is a structural cost TX-2 forces, not a violation.
 
 **Abstraction waits for its second use (STY-28).** An interface with one implementation adds a hop to every read and a file to every change, and fixes the seam before a second use shows where the variation really is. Extracting when that use arrives is a local refactor; removing a wrong abstraction touches every caller. A dedicated executor is not created per domain either — check whether an existing pool or a synchronous call will do.
 
-### TX-2 Long-running external calls inside a transaction
+### TX-1 · TX-2 · TX-3 Transactional Services and Facades
 
-A transaction held across a slow external call holds its row locks and a pooled connection for the duration of that call. **Canonical incident** — adding `@Transactional` to an initializer made the next executor task start inside the uncommitted transaction; that task called another service, which called back to read the not-yet-committed row (invisible under READ COMMITTED), and the callback INSERT blocked on the UNIQUE index until commit.
+**The default that fails safe.** With `@Transactional` on each method, a write method whose annotation was forgotten runs every repository call in its own transaction: nothing is atomic and a dirty-checked change is lost. With class-level `readOnly = true`, a forgotten override drops the write. With class-level read-write, a forgotten `readOnly` costs a read its optimizations and nothing else — the only one of the three whose mistake does not lose data.
+
+**Why the external call is kept out by structure.** A transaction held across a slow external call holds its row locks and a pooled connection for the duration of that call. "Do not call out inside a transaction" was a rule each method had to remember, and marking a method non-transactional inside a transactional class leaves a trap: a call to a write method of the same class skips the proxy and opens no transaction (TX-18). A Service that cannot inject an outbound bean cannot make the mistake, and a Facade always reaches its DB steps through another bean's proxy. The cost is one class per flow with an outbound call; the earlier rule avoided that class and paid for it in `inTx` blocks whose correctness depended on reading order.
+
+**Canonical incident** — adding `@Transactional` to an initializer made the next executor task start inside the uncommitted transaction; that task called another service, which called back to read the not-yet-committed row (invisible under READ COMMITTED), and the callback INSERT blocked on the UNIQUE index until commit.
 
 `TransactionRunner` takes an `ObjectProvider<TransactionTemplate>` so the context still starts in modules without a transaction manager. `REQUIRES_NEW` is designed only when a call path that already holds a transaction actually exists — applying it preemptively for a hypothetical caller leaves fossil code (TX-7).
 
@@ -274,9 +298,21 @@ The persistence context is still open while an `AFTER_COMMIT` listener runs inli
 
 Dirty checking writes back whatever the transaction read, so two concurrent edits silently keep the later one. `@Version` turns the loss into a visible 409, and an atomic UPDATE removes the read from the counter path entirely; neither holds a lock across the request.
 
-### TX-15 Checked exceptions roll back
+### TX-15 Checked exceptions and rollback
 
-Kotlin callers never see a checked exception in a signature, so nobody writes `rollbackFor` where Java would have prompted it, and a partial write commits silently. One global switch removes the trap; unwrapping keeps the two boundary APIs throwing the same exception.
+Spring's default is kept so that the code behaves as every Spring reference describes, and a global `rollbackOn` switch was dropped for that reason. The price is a trap Kotlin makes easy: no signature shows a checked exception, so nobody is prompted to write `rollbackFor`, and a partial write commits. The rule therefore names the place it bites — a Service method that lets Java I/O or a library's checked exception escape — and unwrapping in `TransactionRunner` keeps the two boundary APIs throwing the same exception.
+
+### TX-16 Stale writes
+
+`@Version` alone protects the milliseconds two transactions overlap, not the minutes a form stays open — and with a PUT that replaces the whole resource, the stale form overwrites fields its user never touched. The version has to travel to the client and back for the server to know what the client based its edit on. An `If-Match` header was rejected: the body already carries every field of the resource, and one more field needs no header plumbing in the controller.
+
+### TX-17 · TX-18 Annotations that silently do nothing
+
+Both fail without a signal. A write inside a read-only transaction is never flushed, and an annotation on a private or self-invoked method never reaches the proxy; the code reads as correct and the tests that call the method directly pass. Stating each as a rule gives review and the lint something to cite, where before only a sentence inside another rule mentioned them.
+
+### CFG-21 Timeouts
+
+A missing timeout is found during the other side's outage, when every request thread is already waiting on it. Declaring each one as a property makes the wait a reviewed number per environment instead of whatever the library ships.
 
 ### SVC-42 Messages that must not be lost
 
@@ -318,7 +354,7 @@ When an entity name is a Kotlin/Java reserved word, QueryDSL generates `keyword$
 
 ### REP-15 Entity mapping choices
 
-- **`@ManyToOne` inside a domain too** — a reference is a reference whichever domain owns the target; a raw id field leaves the repository unable to take the parent instance and grows workarounds.
+- **`@ManyToOne` inside a domain, an id across domains** — inside a domain a raw id field leaves the repository unable to take the parent instance and grows workarounds, so the reference is an association. Across domains the association was the earlier rule too; it let one domain's query fetch and lazily load another domain's rows, which is the coupling SVC-17 and SVC-39 keep out of the Services. An id stops at the boundary: the other domain's data comes from its Service, and the foreign key in the migration still guards integrity.
 - **`@Enumerated(STRING)`** — ordinals break when constants are reordered.
 - **`protected set`** — public setters let any caller bypass the transition methods that carry the guards and the STY-34 change log.
 - **Derived values are computed (REP-34)** — a stored copy of what other properties determine can disagree with them, and every new input adds a synchronization point in each transition method. A getter cannot be wrong. The cost is that QueryDSL cannot read it, which is why a value a query must filter or sort on in the database is the exception.
@@ -328,9 +364,9 @@ When an entity name is a Kotlin/Java reserved word, QueryDSL generates `keyword$
 
 When a nested collection goes into a `@JdbcTypeCode(SqlTypes.JSON)` field, Hibernate's JSON type does not deep-copy the snapshot, so the entity is judged dirty on every flush — one extra UPDATE per row right after the INSERT, rewriting the same value. It does not reproduce with a flat map, which makes it hard to spot.
 
-### REP-27 Soft delete without a global filter
+### REP-27 Soft delete through a switchable filter
 
-Some paths deliberately read deleted rows (tombstone lookups for audit and history screens), and a global filter silently breaks them, so the cost is an explicit predicate in each QueryDSL read, and an `isDeleted` check in the Service after a derived or own-PK read.
+Repeating `deletedAt.isNull` in every query was the earlier rule, and one forgotten predicate showed deleted rows to ordinary users. A filter that is on by default removes that mistake. It has to be one that can be switched off, because some paths read deleted rows on purpose — a super-admin screen, audit and history lookups: `@SQLRestriction` and `@SoftDelete` cannot be disabled and would push those reads into native SQL or a second mapping of the table. A Hibernate `@Filter` does not apply to a lookup by primary key, so the Service still drops a deleted row after `findById`; that keeps a to-one association to a deleted row loadable instead of failing on access.
 
 ### REP-35 Plain entity classes
 
@@ -339,6 +375,26 @@ A Kotlin `data class` derives equality and hashing from every property, which fo
 ### REP-36 · REP-37 Indexes and online migrations
 
 PostgreSQL leaves foreign keys unindexed, so a cascade delete or a lookup by parent scans the child table once the table grows. Index builds and constraint checks lock out writes on large tables; `CONCURRENTLY`, `NOT VALID` and `lock_timeout` keep a deployment from stalling production traffic behind a migration.
+
+### REP-39 Stored enum names
+
+The column holds the constant's name, so a rename in Kotlin leaves rows that no constant matches, and they fail on load — in production, on the first read of an old row, not in a test whose schema and data are new. Tying the data migration to the same change is the only point where the author still knows the old name.
+
+### REP-40 Half-open ranges
+
+An inclusive end needs a "last instant", and every way of writing one is wrong at some precision; `[from, to)` needs none, and adjacent ranges tile without sharing a row.
+
+### REP-41 Orphan-removal collections
+
+Hibernate tracks removed children through the collection instance it handed out. Reassigning the property looks like the simplest way to replace the set and fails only at flush, away from the line that caused it.
+
+### REP-42 · REP-43 Optional, references and unbounded reads
+
+`Optional` in Kotlin duplicates the nullable type and adds a second idiom for the same read. `getReferenceById` on an id nobody checked trades one SELECT for an error that arrives late and as the wrong status; on a row the transaction already holds it is only the foreign key, which is why it is limited rather than banned. A bare `findAll()` works on the day's data and grows into the outage; requiring a bound makes the author say what limits the result.
+
+### REP-44 One list method
+
+A derived `findAllByX` is the first of a family: the next condition adds `findAllByXAndY`, then a fetch-graph variant, and callers must know which one filters what. One `listByQuery` whose Query class grows by a field keeps a single place to read what the list can be filtered by, and starting that way from the first read removes the later migration and the judgment of when two reads are "variations" of each other.
 
 ### REP-38 Sortable properties
 
@@ -358,10 +414,22 @@ Private copies of `runConcurrently` with different thread counts and error colle
 
 When an exception type maps to one ErrorCode, the type already pins the behavior; asserting messages couples tests to wording that carries no contract. The ErrorCode is the contract only where one type carries several codes, and at the HTTP boundary, where `$.type` is what clients branch on.
 
-### TST-33 One shared test context
+### TST-6 English test names
 
-Spring's test context cache keys on a class's full configuration, so any per-class variation starts another context with its own Testcontainers set and mock singletons in the same JVM, adding startup time and container load for each fork. A forked context's mocks are also not the support's shared ones, so the shared-mock guarantees of TST-3 and TST-26 quietly stop holding for that class.
+Test names are read next to the code they exercise, in failure reports and CI logs that also carry English identifiers and messages; one language keeps a name searchable beside the class and enum names it mentions. Korean names were the earlier rule.
+
+### TST-8 · TST-11 Slices and cleanup
+
+A controller test against a mocked Service checks one thing — the HTTP contract and the Command it produces — and needs no database, so it cannot be broken by data. A repository test in the JPA slice rolls back, which removes exactly what it wrote. Only Service tests commit, and they cannot roll back without hiding the commit-time behaviour they exist to check, so their rows are truncated after each test; serial classes and one database per fork make that wipe equal to "delete what this test created". The earlier rule kept one full context for every test and never cleaned up, which made every count assertion depend on scoping to owned data. The cost of the slices is that no test runs a request from HTTP through to the database.
+
+### TST-33 Three fixed test contexts
+
+Spring's test context cache keys on a class's full configuration, so any per-class variation starts another context with its own Testcontainers set and mock singletons in the same JVM, adding startup time and container load for each fork. Three support classes fix the count at three per module. A forked context's mocks are also not the support's shared ones, so the shared-mock guarantees of TST-3 and TST-26 quietly stop holding for that class.
 
 ### TST-34 · COV-9 · COV-10 What the shared context hides
 
 A scheduler firing mid-test changes rows and mock state at random moments, which turns into flaky failures nobody can reproduce. Mocking every Feign client keeps service tests fast but leaves the client's own mapping and error translation untested, so each client gets one test at its real HTTP boundary. Entity-generated test schemas never run the migrations, so one guard per module proves the migrations and the mapping agree before a deployment does.
+
+### TST-35 One test clock
+
+The `Clock` bean is as shared as any mock: one instance for every class in the JVM. A clock a test moved and left there shifts "now" for whichever test runs next, which fails far from its cause. One clock in the support class, reset after each test, gives time the same ownership rule as the other shared doubles, and separates "what time is it" (the clock) from "how old is this row" (backdating).

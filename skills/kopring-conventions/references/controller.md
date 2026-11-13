@@ -33,11 +33,12 @@
 | CTL-23 | | A paged endpoint defaults to `@PageableDefault(size = 20)`; no per-controller page-size constants | [§9](#9-paging) |
 | CTL-24 | | Non-HTTP inbound adapters (scheduler, broker or event listener) live in their protocol directory, stay thin and compose like a controller | [§10](#10-non-http-inbound-adapters) |
 | CTL-25 | | A Feign client lives in `<domain>/client/` for one using domain, `<base>/client/` for two or more; one that calls another deployable of the system makes only calls the caller waits on ([SVC-38](service.md#6-cross-domain-access)) | [§11](#11-feign-clients) |
-| CTL-26 | | Feign timeouts come from `Duration` properties; each client translates failures with its `ErrorDecoder`; no raw `FeignException` leaves a Service | [§11](#11-feign-clients) |
+| CTL-26 | | Feign timeouts come from `Duration` properties; each client translates failures with its `ErrorDecoder`; no raw `FeignException` leaves the client | [§11](#11-feign-clients) |
 | CTL-27 | | An SSE endpoint declares its `@ApiResponse` schema (`oneOf` for variants) | [§12](#12-sse-endpoints) |
-| CTL-28 | | A controller method converts, delegates to the Service (to each domain's Service when composing) and converts back; it never branches on a result (listed exceptions) | [§13](#13-thin-controller) |
+| CTL-28 | | A controller method converts, delegates to the Service (to each domain's Service when composing, to the Facade for a flow with an outbound call) and converts back; it never branches on a result (listed exceptions) | [§13](#13-thin-controller) |
 | CTL-29 | | A wire DTO from a shared module maps through `Command.from(wireDto)` and back through `Result.toResponse()` | [§14](#14-shared-module-wire-dto-mapping) |
 | CTL-33 | | A field, enum value or endpoint is removed or renamed directly, without a deprecation phase, and its consumers are told or changed in the same change | [§8](#8-restful-api-design) |
+| CTL-34 | | A collection that grows with use is paged, and `spring.data.web.pageable.max-page-size` caps the page size | [§9](#9-paging) |
 
 Shared rules apply to controllers too: imports and section banners ([STY-2, STY-6](code-style.md#2-baseline)), comments ([STY-17](code-style.md#5-comments-and-kdoc)), the plain option ([STY-27](code-style.md#10-prefer-the-plain-option)), and DTO names ([STY-50](code-style.md#16-filler-suffixes-and-dto-casing)).
 
@@ -233,7 +234,7 @@ Before and after: [examples](examples/controller.md#ctl-31--ctl-32--response-fie
 | Type | Location | Fields | Use |
 |---|---|---|---|
 | `PaginationResponse<T>` | shared module | mirrors Spring's `Page`: `content`, `totalElements`, `totalPages`, `number`, `size`, `numberOfElements`, `first`, `last`, `empty` (no `sort`) | paged endpoints, through `PaginationResponse.from(page, ...)` |
-| `ErrorResponse` | shared module | `type` (error code), `status`, `message`, `detail`, `url`, `timestamp` (`ZonedDateTime`, serialized with its offset — `Z` under UTC) | produced by the global `@RestControllerAdvice` only — a controller never returns it |
+| `ErrorResponse` | shared module | `type` (error code), `status`, `message`, `detail`, `url`, `timestamp` (`Instant`, serialized in UTC with `Z`) | produced by the global `@RestControllerAdvice` only — a controller never returns it |
 
 The default shape of `PaginationResponse`; a project may already have its own equivalent — use that:
 
@@ -375,6 +376,8 @@ fun pageOrders(
         .let { PaginationResponse.from(it.page, OrderResponse::from) }
 ```
 
+**CTL-34** — A collection endpoint whose rows grow with use (orders, members, logs) is paged (CTL-11); the unpaged wrapper list is for a set bounded by its parent or by design — an order's items, the values of a code table. `application.yml` sets `spring.data.web.pageable.max-page-size` to the largest page the API serves (100 unless the project decides otherwise): Spring Data's own default is 2000, and it clamps a larger `?size=` to the cap instead of rejecting it, so the cap is the real worst case of every paged endpoint. The repository side is [REP-43](repository.md#3-naming-and-query-objects).
+
 ## 10. Non-HTTP inbound adapters
 
 **CTL-24** — Non-HTTP inbound handlers go in a sibling directory of `controller/`, never in a Service directory. A scheduler, a broker listener and an in-process event listener are inbound adapters just as a controller is. Each stays thin — payload → Command conversion → Service delegation, no business logic — and, when a flow with no controller needs several domains' data, composes their Results the way a controller does ([CTL-28](#13-thin-controller)).
@@ -399,11 +402,11 @@ A broker listener (`@KafkaListener`, a `MessageHandler`, …) lives in its proto
 - use in bootstrap code (e.g. `system/`) does not count as a domain;
 - when the using-domain count changes (1 ↔ 2+), the client moves — verified in PR review.
 
-A Feign client interface is an outbound port, so injecting another domain's `<domain>/client/*Client.kt` directly is allowed ([SVC-17](service.md#6-cross-domain-access) does not apply).
+A Feign client interface is an outbound port, so injecting another domain's `<domain>/client/*Client.kt` directly is allowed ([SVC-17](service.md#6-cross-domain-access) does not apply). It is injected by a Facade, a listener or a controller's gate call, never by a Service ([TX-2](transactions.md#3-external-calls-and-compensation)).
 
 A client that calls another deployable of the same system makes only calls the caller waits on — a read (`GET`, or a `POST …/search` read, [CTL-21](#8-restful-api-design)) or a command whose result the caller returns or whose failure must reach the caller. A state change the caller does not wait for travels over the message broker instead ([SVC-38](service.md#6-cross-domain-access)). A third-party API is outside this limit.
 
-**CTL-26** — A Feign client's connect and read timeouts come from a properties class as `Duration`, never hard-coded. Each client registers an `ErrorDecoder` in its `config/<External>FeignConfig.kt` that maps downstream statuses to the calling domain's named exceptions (`PaymentFeignConfig` → `PaymentErrorDecoder`). A Service never lets a raw `FeignException` escape, and once the decoder exists there is no per-call-site `callXOrThrow` wrapper.
+**CTL-26** — A Feign client's connect and read timeouts come from a properties class as `Duration`, never hard-coded. Each client registers an `ErrorDecoder` in its `config/<External>FeignConfig.kt` that maps downstream statuses to the calling domain's named exceptions (`PaymentFeignConfig` → `PaymentErrorDecoder`). No caller ever sees a raw `FeignException`, and once the decoder exists there is no per-call-site `callXOrThrow` wrapper.
 
 Directory structure and examples: [examples](examples/controller.md#ctl-25--ctl-26--feign-client-directory-layout).
 
@@ -426,7 +429,7 @@ Choose `schema` to match the actual wire shape:
 
 ## 13. Thin controller
 
-**CTL-28** — A `@RestController` method body does only: ① receive the principal / `@PathVariable` / `@RequestParam` → ② `request.toCommand(...)` → ③ delegate to the Service — or, when the response composes several domains, to each domain's Service ([SVC-39](service.md#6-cross-domain-access) row 1) → ④ `Response.from(results…)` (CTL-8). Push the following out of the controller into the Service or a DTO factory:
+**CTL-28** — A `@RestController` method body does only: ① receive the principal / `@PathVariable` / `@RequestParam` → ② `request.toCommand(...)` → ③ delegate to the Service — to each domain's Service when the response composes several domains ([SVC-39](service.md#6-cross-domain-access) row 1), or to the Facade when the flow has an outbound call ([TX-3](transactions.md#3-external-calls-and-compensation)) → ④ `Response.from(results…)` (CTL-8). Push the following out of the controller into the Service or a DTO factory:
 
 | Leaked into controller ❌ | Belongs in |
 |---|---|
@@ -461,8 +464,7 @@ This is the controller-side peer of [SVC-5](service.md#2-method-signatures) (no 
 | a Service method returning `Response` (or an Entity) to the Controller | the Service returns `Result`; the Response is built by `Response.from(result)` (CTL-8) |
 | a Service method returning `List<*Result>` | wrapper Result and Response ([SVC-4](service.md#2-method-signatures), CTL-11) |
 | a Service injecting another domain's Service only to decorate its Result for a response | the controller composes both Results ([SVC-39](service.md#6-cross-domain-access) row 1) |
-
-**Exception — a post-commit external call**: a controller may take what the Service's write returns (e.g. the storage files an edit orphaned) and delete them through another Service after the edit commits, so the edit's `@Transactional` never holds the storage call ([TX-2](transactions.md#3-external-calls-and-compensation)).
+| a controller sequencing a Service write and an external call itself | a Facade owns the flow and its compensation ([TX-3](transactions.md#3-external-calls-and-compensation)) |
 
 **Exception — the plain-option hoist**: a controller may call one remote reader before its Service and pass the answer in the Command; the conditions and the call-site list are [STY-27](code-style.md#10-prefer-the-plain-option).
 

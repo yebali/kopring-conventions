@@ -11,7 +11,7 @@ Kotlin + Spring Boot coding conventions as agent skills: controllers, services, 
 | `check-conventions` | Audit production and test code (and `application*.yml`) against the rules, fix the violations a rule decides, write missing tests and ask about the rest. It edits code. |
 | `structure-check` | Find code that follows every rule yet is too complex or tangled, and write a refactoring plan. It never edits code. |
 | `sync-docs` | Find where the markdown docs no longer match the code and fix the docs. It never edits code. |
-| `test-code` | Write MockMvc integration tests for the code changed in the current diff, following the testing and coverage rules. |
+| `test-code` | Write the controller, Service, Facade and repository tests for the code changed in the current diff, following the testing and coverage rules. |
 
 An installed skill is also a slash command: `/kopring-conventions`, `/coding-workflow`, `/check-conventions`, `/structure-check`, `/sync-docs`, `/test-code`.
 
@@ -38,7 +38,7 @@ The rules live in `skills/kopring-conventions/references/`. Each document starts
 | `COV` | `test-coverage.md` | Which tests a suite needs |
 | `CFG` | `configuration.md` | Environment placeholders and `@ConfigurationProperties` classes |
 
-`rationale.md` records why a rule exists. `examples/` holds one worked example file per layer. Identifiers are never renumbered once a consuming project relies on them; a gap in a sequence is a project-specific rule that was removed, or a number a consuming project uses for its own rule (`CTL-30`). A `⚠` marks a rule whose violation corrupts data, breaks the wire contract or misleads every reader.
+`rationale.md` records why a rule exists. `examples/` holds one worked example file per layer. Identifiers are never renumbered once a consuming project relies on them; a gap in a sequence is a project-specific rule that was removed, or a number a consuming project uses for its own rule (`CTL-30`, `SVC-43`). A `⚠` marks a rule whose violation corrupts data, breaks the wire contract or misleads every reader.
 
 A project's own instructions (`CLAUDE.md`, `AGENTS.md`, `docs/`) override these rules. List only the differences there, keyed by rule ID, and cite the skill for the rest.
 

@@ -2,7 +2,7 @@
 
 Rule text lives in [testing.md](../testing.md) (`TST-*`) and [test-coverage.md](../test-coverage.md) (`COV-*`); each heading names the rule its example illustrates.
 
-## TST-2 — SpringBootTestSupport and Testcontainers
+## TST-2 — Support classes and Testcontainers
 
 Each module keeps its own `TestcontainersConfiguration` and starts its own containers: PostgreSQL, plus Redis if the module uses it. The wiring rests on three mechanisms:
 
@@ -30,12 +30,30 @@ class TestcontainersConfiguration {
     companion object { /* image constants + private bootstrap fns */ }
 }
 
-// SpringBootTestSupport pulls it in — no ApplicationContextInitializer / TestPropertyValues:
+// the three support classes pull the configuration in — no ApplicationContextInitializer / TestPropertyValues:
+@WebMvcTest
+@ActiveProfiles("test")
+@Import(WebConfig::class)                                    // principal resolver, authorization interceptor
+abstract class WebMvcTestSupport {
+    @Autowired protected lateinit var mockMvc: MockMvc
+    @Autowired protected lateinit var objectMapper: ObjectMapper
+    @MockkBean protected lateinit var orderService: OrderService   // every Service and Facade a controller injects
+    @MockkBean protected lateinit var orderFacade: OrderFacade
+}
+
+@DataJpaTest
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@ActiveProfiles("test")
+@Import(TestcontainersConfiguration::class, QuerydslConfig::class)
+abstract class DataJpaTestSupport { ... }                    // rolled back by the slice
+
 @SpringBootTest
-@AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Import(TestcontainersConfiguration::class)
-abstract class SpringBootTestSupport { ... }
+abstract class SpringBootTestSupport {
+    @AfterEach
+    fun wipeDatabase() { ... }                               // TRUNCATE … CASCADE over every table but the seed tables (TST-12)
+}
 ```
 
 ## TST-3 — Inherited dependencies
@@ -44,7 +62,7 @@ abstract class SpringBootTestSupport { ... }
 // ✅ Good — use inherited dependencies as-is
 class OrderServiceTest : SpringBootTestSupport() {
     @Test
-    fun `주문을 취소한다`() {
+    fun `cancels the order`() {
         applicationEventPublisher.publishEvent(event)   // inherited
         orderService.cancel(command)                     // inherited
     }
@@ -57,29 +75,29 @@ class OrderServiceTest : SpringBootTestSupport() {
 }
 ```
 
-## TST-5 · TST-6 — Nested grouping and Korean names
+## TST-5 · TST-6 — Nested grouping and English names
 
 ```kotlin
-// ✅ Good — @Nested per domain feature, Korean backtick names, no @DisplayName
+// ✅ Good — @Nested per domain feature, English backtick names, no @DisplayName
 class OrderServiceTest : SpringBootTestSupport() {
     @Nested
-    inner class `주문 생성` {
-        @Test fun `생성에 성공한다`() { ... }
-        @Test fun `재고가 부족하면 주문할 수 없다`() { ... }
+    inner class `order creation` {
+        @Test fun `creates the order`() { ... }
+        @Test fun `rejects the order when stock is short`() { ... }
     }
 
     @Nested
-    inner class `주문 취소` {
-        @Test fun `주문을 취소하면 상태가 CANCELED 가 된다`() { ... }
+    inner class `order cancellation` {
+        @Test fun `canceling an order sets its status to CANCELED`() { ... }
     }
 
     @Nested
-    inner class `주문 조회` {
-        @Test fun `주문을 반환한다`() { ... }
+    inner class `order retrieval` {
+        @Test fun `returns the order`() { ... }
     }
 }
 
-// ❌ Bad — no grouping, English PascalCase group, @DisplayName
+// ❌ Bad — PascalCase group, @DisplayName, a Korean name, a camelCase name
 class OrderServiceTest : SpringBootTestSupport() {
     @Nested
     inner class Create { ... }
@@ -87,21 +105,23 @@ class OrderServiceTest : SpringBootTestSupport() {
     @DisplayName("Create Order")
     @Test
     fun `주문을 생성한다`() { ... }
+
+    @Test
+    fun shouldCancelOrder() { ... }
 }
 ```
 
 ## TST-8 — Transactional placement
 
 ```kotlin
-// ✅ Repository test — class-level @Transactional (bulk DML needs a transaction boundary)
-@Transactional
-class CustomOrderRepositoryImplTest : SpringBootTestSupport() {
+// ✅ Repository test — the @DataJpaTest slice opens the transaction bulk DML needs and rolls it back
+class CustomOrderRepositoryImplTest : DataJpaTestSupport() {
     @Test
-    fun `회원에 속한 모든 주문을 삭제한다`() {
-        val member = saveMember()
-        val order = saveOrder(member = member)
+    fun `deletes every order of the member`() {
+        val memberId = UUID.randomUUID()
+        val order = buildOrder(memberId = memberId).also(entityManager::persist)
 
-        orderRepository.bulkDeleteByMember(member)
+        orderRepository.bulkDeleteByMemberId(memberId)
         entityManager.flush()
         entityManager.clear()                            // bulk DML left the loaded order stale (TST-23)
 
@@ -109,11 +129,10 @@ class CustomOrderRepositoryImplTest : SpringBootTestSupport() {
     }
 }
 
-// ✅ Service test — no @Transactional and no teardown deletes: rows stay, assertions scope
-//    to this test's own ids (TST-11). A rolled-back Repository test needs no cleanup at all.
+// ✅ Service test — no @Transactional and no cleanup of its own: the support's wipe removes this test's rows (TST-11)
 class OrderServiceTest : SpringBootTestSupport() {
     @Test
-    fun `주문하면 재고가 주문 수량만큼 줄어든다`() {
+    fun `ordering reduces the stock by the ordered quantity`() {
         val product = saveProduct(stock = 10)
 
         orderService.create(buildCreateOrderCommand(productId = product.id, quantity = 3))
@@ -126,26 +145,26 @@ class OrderServiceTest : SpringBootTestSupport() {
 ## TST-9 — Repository query and ordering
 
 ```kotlin
-// save data → query with Sort/PageRequest → assert ordering
-val member = saveMember()
-saveOrder(member = member, totalPrice = 9_500L)
-saveOrder(member = member, totalPrice = 7_500L)
-val results = orderRepository.pageByQuery(OrderQuery(memberId = member.id, pageable = PageRequest.of(0, 10, Sort.by("totalPrice").descending())))
+// persist data → query with Sort/PageRequest → assert ordering
+val memberId = UUID.randomUUID()
+entityManager.persist(buildOrder(memberId = memberId, totalPrice = 9_500L))
+entityManager.persist(buildOrder(memberId = memberId, totalPrice = 7_500L))
+val results = orderRepository.pageByQuery(PageOrderQuery(memberId = memberId, pageable = PageRequest.of(0, 10, Sort.by("totalPrice").descending())))
 assertThat(results.content.map { it.totalPrice }).containsExactly(9_500L, 7_500L)
 ```
 
 ## TST-10 — Plain unit test
 
 ```kotlin
-// plain class (no SpringBootTestSupport), @Nested, classpath resource loading
+// plain class (no support class), @Nested, classpath resource loading
 class OrderCsvParserTest {
     private fun classpathFile(name: String): Path =
         Path.of(requireNotNull(javaClass.classLoader.getResource("csv/$name")) { "Test resource not found: csv/$name" }.toURI())
 
     @Nested
-    inner class `주문 CSV 파싱` {
+    inner class `order CSV parsing` {
         @Test
-        fun `헤더를 제외한 모든 행을 주문으로 변환한다`() {
+        fun `turns every row but the header into an order`() {
             assertThat(OrderCsvParser().parse(classpathFile("orders.csv"))).hasSize(3)
         }
     }
@@ -158,7 +177,7 @@ class OrderCsvParserTest {
 // ✅ Good — faker helper + local variables; the success test asserts a derived value (COV-3)
 class MemberServiceTest : SpringBootTestSupport() {
     @Test
-    fun `가입하면 이메일을 소문자로 정규화해 저장한다`() {
+    fun `registering stores the email in lower case`() {
         val email = randomEmail()
         val member = saveMember(email = email.uppercase())
         assertThat(memberRepository.findByIdOrNull(member.id)?.email).isEqualTo(email)
@@ -172,54 +191,58 @@ class MemberServiceTest : SpringBootTestSupport() {
 class MemberServiceTest : SpringBootTestSupport() {
     private val testEmail = "test@example.com"
     private val testMember by lazy { saveMember() }
-    @Test fun `가입한다`() { val member = Member(email = "x@y.com") }
+    @Test fun `registers`() { val member = Member(email = "x@y.com") }
 }
 ```
 
-## TST-19 — Controller test with scoped assertions
+## TST-19 — Controller test against a mocked Service
 
-`buildAuth(memberId)` is the support's `RequestPostProcessor` that attaches the authenticated principal (an auth header, or Spring Security's `user(...)`).
+`buildAuth(memberId)` is the support's `RequestPostProcessor` that attaches the authenticated principal (an auth header, or Spring Security's `user(...)`). `orderService` is a `@MockkBean` of `WebMvcTestSupport`.
 
 ```kotlin
-class OrderControllerTest : SpringBootTestSupport() {
+class OrderControllerTest : WebMvcTestSupport() {
     @Nested
-    inner class `주문 생성` {
+    inner class `order creation` {
         @Test
-        fun `POST api_v1_orders 는 201 을 반환한다`() {
-            val member = saveMember()
-            mockMvc.perform(post("/api/v1/orders").with(buildAuth(member.id))
+        fun `POST api_v1_orders returns 201`() {
+            val memberId = UUID.randomUUID()
+            val productId = UUID.randomUUID()
+            every { orderService.createOrder(any()) } returns buildCreateOrderResult(status = OrderStatus.PENDING)
+
+            mockMvc.perform(post("/api/v1/orders").with(buildAuth(memberId))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(CreateOrderRequest(memberId = member.id))))
+                .content(objectMapper.writeValueAsString(CreateOrderRequest(memo = null, items = listOf(CreateOrderRequest.Item(productId = productId, quantity = 1))))))
                 .andExpect(status().isCreated)
                 .andExpect(jsonPath("$.status").value(OrderStatus.PENDING.name))
+
+            verify { orderService.createOrder(match { it.memberId == memberId && it.items.single().productId == productId }) }
         }
     }
 
     @Nested
-    inner class `주문 단건 조회` {
+    inner class `order retrieval` {
         @Test
-        fun `GET api_v1_orders_orderId 는 주문을 반환한다`() {
-            val member = saveMember()
-            val order = saveOrder(member = member)
-            mockMvc.perform(get("/api/v1/orders/${order.id}").with(buildAuth(member.id)))
-                .andExpect(status().isOk)
-                .andExpect(jsonPath("$.id").value(order.id.toString()))
+        fun `GET api_v1_orders_orderId returns 404 when the Service reports no such order`() {
+            val orderId = UUID.randomUUID()
+            every { orderService.getOrder(any()) } throws OrderNotFoundException(orderId)
+
+            mockMvc.perform(get("/api/v1/orders/$orderId").with(buildAuth(UUID.randomUUID())))
+                .andExpect(status().isNotFound)
+                .andExpect(jsonPath("$.type").value("ORDER-1000"))
         }
     }
 
     @Nested
-    inner class `주문 목록 조회` {
+    inner class `order paging` {
         @Test
-        fun `GET api_v1_orders 는 이 회원의 주문 목록을 반환한다`() {
-            val member = saveMember()
-            saveOrder(member = member)
-            saveOrder(member = member)
+        fun `GET api_v1_orders passes the status filter and the page size to the Service`() {
+            val memberId = UUID.randomUUID()
+            every { orderService.pageOrders(any()) } returns buildPageOrderResult()
 
-            // ✅ the endpoint's own memberId filter makes the exact count true regardless of other tests
-            mockMvc.perform(get("/api/v1/orders").param("memberId", member.id.toString()).with(buildAuth(member.id)))
+            mockMvc.perform(get("/api/v1/orders").param("status", OrderStatus.PAID.name).param("size", "5").with(buildAuth(memberId)))
                 .andExpect(status().isOk)
-                .andExpect(jsonPath("$.totalElements").value(2))
-            // ❌ without .param(...) this needs an empty DB, i.e. a teardown that deletes everyone's rows
+
+            verify { orderService.pageOrders(match { it.memberId == memberId && it.status == OrderStatus.PAID && it.pageable.pageSize == 5 }) }
         }
     }
 }
@@ -228,8 +251,8 @@ class OrderControllerTest : SpringBootTestSupport() {
 ## TST-22 — Exception and ErrorCode assertions
 
 ```kotlin
-// Controller test — status + ErrorCode in $.type
-mockMvc.perform(get("/api/v1/orders/$nonExistentId").with(buildAuth(memberId)))
+// Controller test — the stubbed Service throws; status + ErrorCode in $.type
+mockMvc.perform(get("/api/v1/orders/$orderId").with(buildAuth(memberId)))
     .andExpect(status().isNotFound)
     .andExpect(jsonPath("$.type").value("ORDER-1000"))
 
@@ -238,12 +261,12 @@ assertThatThrownBy { orderService.get(UUID.randomUUID()) }
     .isInstanceOf(OrderNotFoundException::class.java)
 
 // Service test — one exception type carries several codes, so the ErrorCode is checked too
-assertThatThrownBy { orderService.create(command) }
-    .isInstanceOf(OrderInvalidValueException::class.java)
-    .extracting("errorCode").isEqualTo(ErrorCode.ORDER_ITEM_QUANTITY_INVALID)
+assertThatThrownBy { orderService.cancel(command) }
+    .isInstanceOf(OrderNotCancelableException::class.java)
+    .extracting("errorCode").isEqualTo(ErrorCode.ORDER_ALREADY_SHIPPED)
 
 // ❌ asserting the message
-assertThatThrownBy { orderService.create(command) }.hasMessage("Order item quantity is invalid")
+assertThatThrownBy { orderService.cancel(command) }.hasMessage("Order is already shipped")
 ```
 
 ## COV-4 — Private method via public input

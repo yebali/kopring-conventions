@@ -16,11 +16,11 @@
 | STY-8 | | No `@Suppress("UNCHECKED_CAST")`; express the cast type-safely | [§3](#3-kotlin-syntax) |
 | STY-9 | | A single-expression trailing lambda stays on one line (message lambdas always, others up to 120 characters) | [§3](#3-kotlin-syntax) |
 | STY-10 | | One blank line before the final `return` of a block body | [§3](#3-kotlin-syntax) |
-| STY-11 | | Named arguments for calls with 2+ arguments, except the listed shapes | [§3](#3-kotlin-syntax) |
+| STY-11 | | In a call with 2+ arguments, name same-typed arguments and every `Boolean`, `null` or literal; other arguments may stay positional | [§3](#3-kotlin-syntax) |
 | STY-12 | | One top-level type per file (five carve-outs); Command/Result and Request/Response files at their directory root | [§4](#4-files-and-packages) |
 | STY-14 | | No sub-domain inside a domain that replicates the layer tree | [§4](#4-files-and-packages) |
 | STY-15 | | Search the shared util locations before writing a util; place it by scope of use | [§4](#4-files-and-packages) |
-| STY-16 | | Class and function KDoc summaries only when the decision table's triggers hold; one line, no tags | [§5](#5-comments-and-kdoc) |
+| STY-16 | | Every public top-level type and public function carries a one-line KDoc summary without tags; a private one only when a trigger of the decision table holds | [§5](#5-comments-and-kdoc) |
 | STY-17 | | Line comments only on genuinely complex logic, in present tense and domain vocabulary — never history, rationale or code translation | [§5](#5-comments-and-kdoc) |
 | STY-18 | | A deliberate simplification may carry one `// ponytail:` comment in Korean naming its limit and how to lift it | [§5](#5-comments-and-kdoc) |
 | STY-19 | | Inline every single-use intermediate unless one of the five keep conditions holds | [§6](#6-single-use-intermediates) |
@@ -31,12 +31,12 @@
 | STY-24 | | A method name is a verb phrase of about 30 characters at most | [§8](#8-method-shape) |
 | STY-25 | | Use the latest stable idiom of the adopted versions; no deprecated API in new code | [§9](#9-standard-library-and-readable-code) |
 | STY-26 | | Standard-library functions before loops, helpers or project extensions | [§9](#9-standard-library-and-readable-code) |
-| STY-27 | | Plain control flow first: one `@Transactional`, a synchronous call, assembly in the controller — extra boundaries, executors, `@Async` and AOP only when the plain form cannot work | [§10](#10-prefer-the-plain-option) |
+| STY-27 | | Plain control flow first: one Service transaction, a synchronous call, assembly in the controller — a Facade, extra boundaries, executors, `@Async` and AOP only when the plain form cannot work | [§10](#10-prefer-the-plain-option) |
 | STY-28 | | No abstraction (interface, base class, strategy, flag, optional parameter) without a second real use | [§10](#10-prefer-the-plain-option) |
-| STY-29 | | Persisted and DTO timestamps are `ZonedDateTime`; `Instant` only for framework APIs and in-memory arithmetic | [§11](#11-time-and-durations) |
+| STY-29 | | Persisted and DTO timestamps are `Instant`, a calendar date is `LocalDate`; `ZonedDateTime` only for arithmetic in the application time zone | [§11](#11-time-and-durations) |
 | STY-30 | | Date boundaries (today, year, month) use the application time zone; never `ZoneId.systemDefault()` | [§11](#11-time-and-durations) |
 | STY-31 | | A time-of-day `@Scheduled(cron)` declares `zone` as the application time zone | [§11](#11-time-and-durations) |
-| STY-32 | | Compare and order `ZonedDateTime` through `isBefore`/`isAfter`/`isEqual` or `toInstant()`, never `equals`/`<`/`compareTo` | [§11](#11-time-and-durations) |
+| STY-32 | | Where a `ZonedDateTime` still appears, compare and order it through `isBefore`/`isAfter`/`isEqual` or `toInstant()`, never `equals`/`<`/`compareTo` | [§11](#11-time-and-durations) |
 | STY-33 | | Durations in code are `java.time.Duration`, never a number with a unit suffix | [§11](#11-time-and-durations) |
 | STY-34 | | An entity state-change method logs the fields it assigns at INFO, `id` first; an unbounded bulk change uses bulk DML and one INFO summary instead | [§12](#12-logging) |
 | STY-35 | | Application logs read `{Subject} {action}: key=value, …` at the level §12 assigns; every operation leaves an INFO line with its result, and a line repeated inside one operation is DEBUG | [§12](#12-logging) |
@@ -59,7 +59,9 @@
 | STY-54 | | A new file, package or module follows the module and package layout table | [§19](#19-module-and-package-layout) |
 | STY-55 | | A new ErrorCode is its prefix's highest number + 1; removed numbers are never reused or closed up | [§20](#20-errorcode-numbering) |
 | STY-57 | | Each service module registers its own code for a shared concept unless `CommonErrorCode` already covers it | [§20](#20-errorcode-numbering) |
-| STY-58 | | Production code reads the current time from an injected `Clock` (`ZonedDateTime.now(clock)`), never the no-argument `now()` | [§11](#11-time-and-durations) |
+| STY-58 | | Production code reads the current time from an injected `Clock` (`Instant.now(clock)`), never the no-argument `now()` | [§11](#11-time-and-durations) |
+| STY-59 | ⚠ | A singleton bean's mutable field is a thread-safe type; request data never lives in a bean field | [§14](#14-threads-retries-and-lifecycle) |
+| STY-60 | | A `when` over an enum or a sealed type has no `else` branch | [§3](#3-kotlin-syntax) |
 
 These rules apply to every layer (controller, service, repository, entity, util) alongside the layer file. Worked `❌`/`✅` pairs live in [examples/code-style.md](examples/code-style.md). §18–§20 are situational — a broker or Spring-event DTO, a new file, package or module, a new ErrorCode; read the matching section before such an edit. When an external skill says otherwise, [§17](#17-external-skill-precedence) settles it.
 
@@ -94,7 +96,7 @@ Timestamps follow [§11](#11-time-and-durations). An optional `@RequestParam` fo
 
 ## 3. Kotlin syntax
 
-**STY-7** — No not-null assertion `!!`, in production code or tests. Unwrap with `requireNotNull(x) { "<context message>" }` where the failure-forms table of [SERVICE §5](service.md#5-exceptions-and-failure-forms) allows it: for an internal invariant inside a Service or Command, and freely outside Service and Command (`SpringBootTestSupport` and other test infrastructure, utils, repository tests). The stdlib `require`/`check`/`error` follow the same table; they are not a way around this rule, and a null branch the table does not allow becomes a named domain exception. Where the platform guarantees non-null, express it with `lateinit` or `by lazy` so nullability never arises: in production code a value built on first use (`val logger by lazy { … }` of the STY-1 base class), in a test class an `@Autowired lateinit var` field ([TST-3](testing.md#2-test-infrastructure)). Field injection stays test-only (STY-4).
+**STY-7** — No not-null assertion `!!`, in production code or tests. Unwrap with `requireNotNull(x) { "<context message>" }` where the failure-forms table of [SERVICE §5](service.md#5-exceptions-and-failure-forms) allows it: for an internal invariant inside a Service or Command, and freely outside Service and Command (the test support classes and other test infrastructure, utils, repository tests). The stdlib `require`/`check`/`error` follow the same table; they are not a way around this rule, and a null branch the table does not allow becomes a named domain exception. Where the platform guarantees non-null, express it with `lateinit` or `by lazy` so nullability never arises: in production code a value built on first use (`val logger by lazy { … }` of the STY-1 base class), in a test class an `@Autowired lateinit var` field ([TST-3](testing.md#2-test-infrastructure)). Field injection stays test-only (STY-4).
 
 ✅ `requireNotNull(member) { "member not loaded: id=$id" }` — ❌ `member!!.name`. [Example](examples/code-style.md#sty-7--not-null-assertion)
 
@@ -102,7 +104,7 @@ Timestamps follow [§11](#11-time-and-durations). An optional `@RequestParam` fo
 
 ✅ `list.filterIsInstance<Order>()` · `readValue(s, object : TypeReference<Map<String, Any>>() {})` — ❌ `@Suppress("UNCHECKED_CAST") … as List<Order>`. [Example](examples/code-style.md#sty-8--unchecked-cast)
 
-**STY-9** — A single-expression trailing lambda stays on one line. The short message lambda of `require`/`check`/`requireNotNull` always goes on one line with its receiver and arguments; this assumes the project disables ktlint's line-length check (`.editorconfig`: `ktlint_standard_max-line-length = disabled` or `max_line_length = off`; left unset, ktlint 1.x's default `ktlint_official` style caps lines at 140), so length is never a reason to wrap it. Any other single-expression trailing lambda (`let`, `map`, `runCatching`, …) goes on one line when the merged line, indentation included, is at most 120 characters; beyond that it stays on three lines. The 120-character cap limits merging — it does not require splitting an existing one-line lambda that is already longer. Exception for both: when the argument (receiver expression) is itself multi-line, leave it — the wrap comes from the argument, not the lambda.
+**STY-9** — A single-expression trailing lambda stays on one line. The short message lambda of `requireValid`/`require`/`check`/`requireNotNull` always goes on one line with its receiver and arguments; this assumes the project disables ktlint's line-length check (`.editorconfig`: `ktlint_standard_max-line-length = disabled` or `max_line_length = off`; left unset, ktlint 1.x's default `ktlint_official` style caps lines at 140), so length is never a reason to wrap it. Any other single-expression trailing lambda (`let`, `map`, `runCatching`, …) goes on one line when the merged line, indentation included, is at most 120 characters; beyond that it stays on three lines. The 120-character cap limits merging — it does not require splitting an existing one-line lambda that is already longer. Exception for both: when the argument (receiver expression) is itself multi-line, leave it — the wrap comes from the argument, not the lambda.
 
 ✅ `requireNotNull(x) { "msg" }` — ❌ splitting `{` body `}` across three lines. [Example](examples/code-style.md#sty-9--single-expression-trailing-lambda)
 
@@ -110,19 +112,22 @@ Timestamps follow [§11](#11-time-and-durations). An optional `@RequestParam` fo
 
 ✅ `publish(event)⏎⏎ return OrderResult.from(order)` — ❌ `publish(event)⏎ return OrderResult.from(order)`. [Example](examples/code-style.md#sty-10--blank-line-before-the-final-return)
 
-**STY-11** — A call passing 2+ arguments names them (`foo(a = x, b = y)`). Exempt:
+**STY-11** — In a call with two or more arguments, name the arguments whose position alone does not say which is which: two or more arguments of the same type (`transfer(from = a, to = b)`), and every `Boolean`, `null` or bare literal (`saveProduct(category, stock = 10, active = true)`). Once one argument of a call is named, every argument after it is named too. Other arguments may be named or positional; a DTO built field by field reads best named. A single-argument call is never named (`findById(id)`, `take(10)`). Naming does not apply to:
 
-- single-argument calls (`findById(id)`);
 - operator and infix calls (`a + b`, `a to b`) — named syntax is impossible;
 - Java (non-Kotlin) function calls (`passwordEncoder.matches(raw, encoded)`) — the compiler rejects named arguments there;
-- trailing lambdas (`list.map { }`) — the lambda stays trailing, other arguments are still named;
+- trailing lambdas (`list.map { }`) — the lambda stays trailing;
 - Kotlin comparison and math functions (`maxOf`, `minOf`, `min`, `max`) — the arguments are symmetric, so there is no order to mix up;
-- the vararg elements of a call (`lockPaths(a, b)`) — other parameters of the same call are still named;
+- the vararg elements of a call (`lockPaths(a, b)`);
 - QueryDSL and fluent builder chains (`.eq()`, `.and()`, `.where()`).
 
 ktlint cannot enforce it.
 
-✅ `createMember(name = n, email = e, active = true)` — ❌ `createMember(n, e, true)`. [Example](examples/code-style.md#sty-11--named-arguments)
+✅ `order.assign(memberId = memberId, warehouseId = warehouseId)` · `createMember(profile, active = true)` — ❌ `order.assign(memberId, warehouseId)` (two `UUID`s) · `createMember(profile, true)`. [Example](examples/code-style.md#sty-11--named-arguments)
+
+**STY-60** — A `when` whose subject is an enum or a sealed type lists every case and has no `else` branch, as an expression or as a statement. Adding a constant is then a compile error at every place that must decide about it; with an `else` the new constant silently takes the fallback. Cases that share a branch are listed together (`PAID, SHIPPED -> …`). The enum mappers are the same rule ([SVC-28](service.md#92-two-mappers)). An `else` stays where the subject is open: a `String`, a number, a non-sealed class.
+
+✅ `when (status) { PENDING -> …; PAID, SHIPPED -> …; CANCELED -> … }` — ❌ `when (status) { PENDING -> …; else -> … }`
 
 ---
 
@@ -140,7 +145,7 @@ Command, Result, Request and Response files sit at their directory root, one cla
 
 ✅ `sealed interface R { data class A : R; data class B : R }` in one file — ❌ unrelated `class Foo` and `class Bar` in one file, or `service/command/order/OrderCommands.kt`.
 
-**STY-14** — No sub-domain inside a domain that replicates the layer tree. A domain's typical direct children are the layer directories (`controller` with `rest`, `entity`, `enumerate`, `event`, `exception`, `repository` with `query`, `service` with `command`, `client`, `util`, `config`). The test is only "does that child replicate the layer tree", not "is its name a layer name": a group inside one layer (`order/{controller,entity,repository,service}/archive/`), an absorbed external tool tree (`order/importer/{connection,extract,sink,…}/`) and single-purpose directories (`order/lock/`) are all legitimate. A domain is top-level rather than parent-owned unless both hold: ① its entity hangs off another domain's aggregate root through `@ManyToOne` + `@OnDelete(CASCADE)`, and ② that domain is its only external consumer. ① alone misjudges: when domain A's entity cascades from domain B's root but B also consumes A back, ② fails and A stays top-level.
+**STY-14** — No sub-domain inside a domain that replicates the layer tree. A domain's typical direct children are the layer directories (`controller` with `rest`, `entity`, `enumerate`, `event`, `exception`, `repository` with `query`, `service` with `command`, `client`, `util`, `config`). The test is only "does that child replicate the layer tree", not "is its name a layer name": a group inside one layer (`order/{controller,entity,repository,service}/archive/`), an absorbed external tool tree (`order/importer/{connection,extract,sink,…}/`) and single-purpose directories (`order/lock/`) are all legitimate. A domain is top-level rather than parent-owned unless both hold: ① its table hangs off another domain's aggregate root through a foreign key with `ON DELETE CASCADE`, and ② that domain is its only external consumer. ① alone misjudges: when domain A's table cascades from domain B's root but B also consumes A back, ② fails and A stays top-level. A parent-owned type sits inside the parent's domain, so its reference to the root is a same-domain `@ManyToOne` ([REP-15](repository.md#6-entity-mapping)).
 
 ✅ `order/{controller,entity,service,…}/OrderAttachment*.kt` — ❌ `order/attachment/{controller,entity,service,…}/`.
 
@@ -161,13 +166,14 @@ Explanation is split by altitude — what a reader needs before opening a file d
 
 | What | Where | Why |
 |---|---|---|
-| A class or object's role, when its name does not say it | a one-line KDoc (`/** … */`) directly above the declaration (STY-16) | a reader scanning the package needs it before opening the body |
-| A function's role, when a trigger holds | a one-line KDoc above the function (STY-16) | skip it when the name and types predict the body |
+| What a public class, interface or object is for | a one-line KDoc (`/** … */`) directly above the declaration (STY-16) | a reader scanning the package needs it before opening the body |
+| What a public function is for, and what its signature does not show | a one-line KDoc above the function (STY-16) | the caller reads it instead of the body |
+| A private declaration's role, when a trigger holds | a one-line KDoc above it (STY-16) | skip it when the name and types predict the body |
 | A genuinely complex line or block | a `//` at that line (STY-17) | only where a careful reader could still misread the logic after reading it once |
 | A known limit of a deliberate simplification | one `// ponytail:` line (STY-18) | the next reader needs the ceiling before relying on the code |
 | Why, background, history | commit-message body · decision records (e.g. `docs/decisions/`) · test names | in source it is never reviewed and rots with the code — a stale rationale is worse than none |
 
-**STY-16** — A class or function gets a KDoc summary only when a trigger in the decision table ([§5.3](#53-deciding-a-comment-finding)) holds: for a class, its name and package do not state its role; for a function, it has a side effect its name does not say, absorbs a failure or returns a value with a special meaning, carries an ordering guarantee callers rely on, or expects a precondition, transaction or lock its signature does not show. A summary is one line, rarely two, states what the declaration is for — not how it is implemented and not why it exists — and carries no `@param`/`@return`/`@throws` tags; the signature already says those. Skip it when the declaration already says it: a `*NotFoundException`, a one-line expression-body function whose signature predicts the body, a data class whose name and fields are the whole story, a trivial getter or override. A summary that keeps growing past ~3 lines to state *what* is a sign the declaration needs splitting, not a longer comment.
+**STY-16** — Every public top-level type (class, interface, object, enum) and every public function in production code carries a KDoc summary: one line, rarely two, saying what the declaration is for in domain vocabulary — not how it is implemented and not why it exists — and adding at least one fact the name does not carry: what it returns, whom it serves, what it rejects (`/** 주문을 조회한다. */` on `getOrder` adds nothing; `/** 호출자 소유가 아닌 주문은 없는 것으로 답한다. */` does). A function's summary also states what the signature does not show: a side effect its name does not say, an absorbed failure or a return value with a special meaning, an ordering guarantee callers rely on, a precondition, transaction or lock it expects. No `@param`/`@return`/`@throws` tags; the signature already says those. Not covered: an `override` (the supertype's summary applies), a property or constructor parameter, a nested type (the enclosing type's summary covers it), and `src/test/**` ([TST-1](testing.md#3-test-structure)). A private or internal declaration gets a summary only when a trigger in the decision table ([§5.3](#53-deciding-a-comment-finding)) holds. A summary that keeps growing past ~3 lines to state *what* is a sign the declaration needs splitting, not a longer comment. The snippets in these reference documents leave the summaries out to stay short; production code does not.
 
 **STY-17** — Line comments are reserved for genuinely complex logic: a branch, calculation, ordering or edge case a careful reader could still get wrong. Most executable lines get none. A self-naming call (`logger.info { }`, `applicationEventPublisher.publishEvent(...)`, a guard clause whose condition names itself), a plain assignment or a one-line CRUD or repository call needs no comment. Tests carry none ([TST-1](testing.md#3-test-structure)).
 
@@ -204,17 +210,17 @@ A multi-line call's `(` is unconstrained (`service.foo( // …` passes), and com
 
 ### 5.3 Deciding a comment finding
 
-Every comment finding has exactly one fix, so a review never leaves one for a human to judge. For an existing comment apply the first of the first five rows that matches; for a missing summary use the last two rows. When two outcomes seem possible, delete — a missing comment costs less than a stale one.
+Every comment finding has exactly one fix, so a review never leaves one for a human to judge. For an existing comment apply the first of the first five rows that matches; for a missing summary use the last two rows. When two outcomes seem possible for a line comment, delete — a missing comment costs less than a stale one.
 
 | Finding | Test | Fix |
 |---|---|---|
 | Limit comment | the comment starts with `// ponytail:` and states a limit of the current code (optionally how to lift it) | keep it; the *History or rationale* row does not apply to it |
 | History or rationale | the text contains a history word (`기존에는` · `예전에는` · `이전에는` · `바뀌었다` · `옮겼다` · `대체했다`), names the ticket that changed it, or says why the code was written this way instead of what it does now | delete that clause; keep the current-state remainder, or delete the comment when nothing is left |
-| Code-translating | remove every word that is a name in the declaration or on the line, and nothing is left | delete; when a domain fact remains, keep only that fact in domain vocabulary |
+| Code-translating | remove every word that is a name in the declaration or on the line, and nothing is left | a line comment or a private summary: delete; a mandatory public summary (STY-16): rewrite it to state a fact the name does not carry. When a domain fact remains, keep only that fact in domain vocabulary |
 | Line comment on simple logic | the line is none of: a non-obvious ordering or boundary, an arithmetic or encoding choice, the domain meaning of a magic value, a transaction or concurrency ordering constraint, a workaround for a library or platform behavior | delete |
 | Oversized summary | the summary spends more than ~3 lines on *what* | cut to the one line that says what it is for |
-| Missing function summary | the function meets at least one trigger: a side effect its name does not say (event, audit row, remote call, file write) · it absorbs a failure instead of throwing, or a return value carries a special meaning (`null` / empty / `false` = X) · callers rely on an ordering or first-wins guarantee · a precondition, transaction or lock expectation is absent from the signature | add one KDoc line in domain vocabulary that states the trigger; with no trigger, add nothing |
-| Missing class summary | the name and package do not state the role, and the declaration is none of the shapes STY-16 skips | add one KDoc line saying what the type is for |
+| Missing function summary | the function is public and not an `override`; or it is private and meets at least one trigger: a side effect its name does not say (event, audit row, remote call, file write) · it absorbs a failure instead of throwing, or a return value carries a special meaning (`null` / empty / `false` = X) · callers rely on an ordering or first-wins guarantee · a precondition, transaction or lock expectation is absent from the signature | add one KDoc line in domain vocabulary; when a trigger holds, the line states it. A private function with no trigger gets nothing |
+| Missing class summary | the type is public and top-level; or it is private and its name and package do not state its role | add one KDoc line saying what the type is for |
 
 ---
 
@@ -269,7 +275,6 @@ A class reads top-down: the public method says **what** a feature does, and priv
 
 ```kotlin
 // ✅ composed feature — the public method is the table of contents
-@Transactional
 fun ship(command: ShipOrderCommand): ShipOrderResult {
     val order = getEntity(command.orderId)
     checkShippable(order)
@@ -311,15 +316,15 @@ STY-9, STY-10 and STY-19 are concrete forms of the same goal; where any of them 
 
 ## 10. Prefer the plain option
 
-**STY-27** — An advanced framework feature is introduced only when the plain form cannot express the work. The plain form is one `@Transactional`, a synchronous call, and assembly at the call site (the inbound adapter). The advanced forms are extra transaction boundaries (`inTx`, `REQUIRES_NEW`), a dedicated `ThreadPoolTaskExecutor` `@Configuration`, AOP, `@Async` and custom propagation.
+**STY-27** — An advanced framework feature is introduced only when the plain form cannot express the work. The plain form is one Service method — one transaction ([TX-1](transactions.md#2-transaction-boundaries)) — a synchronous call, and assembly at the call site (the inbound adapter). The advanced forms are a `*Facade` ([TX-3](transactions.md#3-external-calls-and-compensation)), extra transaction boundaries (`inTx`, `REQUIRES_NEW`), a dedicated `ThreadPoolTaskExecutor` `@Configuration`, AOP, `@Async` and custom propagation.
 
-Before opening a boundary, pass the **upper gate**:
+Before writing a Facade, pass the **upper gate**:
 
-> **If the external call is pushed out of this service (to the caller or a listener), does this boundary disappear entirely?** If yes, do that and do not open the boundary.
+> **If the controller makes the external call and passes its answer in the Command, does the Service method stay one plain transaction?** If yes, do that and write no Facade.
 
-- **Passes** when the call's arguments come from the Command or a constant: hoist the call, keep one `@Transactional`, and delete the compensation code. The controller calls one remote reader before its Service and passes the answer in the Command; the reader call carries no decision of its own, and the Service still validates against it. This hoist is an exception to [CTL-28](controller.md#13-thin-controller).
-- **Does not pass** when the call is sandwiched — its input read from a row and its output written back to it. Then descend to options 1–3 of [TX-3](transactions.md#3-external-calls-and-compensation); loading the row twice is the structural price of [TX-2](transactions.md#3-external-calls-and-compensation), not a STY-27 violation.
-- **Never delete an existing boundary** to satisfy the gate — that silently loses dirty-checking writes. What moves is the external call's location.
+- **Passes** when the call's arguments come from the Command or a constant: the controller calls one remote reader before its Service and passes the answer in the Command; the reader call carries no decision of its own, and the Service still validates against it. This hoist is an exception to [CTL-28](controller.md#13-thin-controller).
+- **Does not pass** when the call is sandwiched — its input read from a row and its output written back to it — or when the flow must compensate. Then it is a Facade ([TX-3](transactions.md#3-external-calls-and-compensation)); loading the row in two transactions is the structural price of [TX-2](transactions.md#3-external-calls-and-compensation), not a STY-27 violation.
+- **Never move DB work out of its Service method** to satisfy the gate — that splits a unit that must commit together. What moves is the external call's location.
 - **Executors follow the same rule**: before adding a per-domain `ThreadPoolTaskExecutor` `@Configuration`, check whether an existing executor or a synchronous call does the work (STY-43).
 
 **Hoisted call sites.** Keep them in one canonical list of this shape; [TX-3](transactions.md#3-external-calls-and-compensation) and [CTL-28](controller.md#13-thin-controller) point here.
@@ -342,19 +347,19 @@ Both rules are review judgments, not machine-detectable.
 
 ## 11. Time and durations
 
-**STY-29** — Persisted and DTO timestamps are `ZonedDateTime`. `ZonedDateTime.now(clock)` (STY-58) is fine: with `timestamptz` columns the stored instant does not depend on the JVM zone. `Instant` appears only where a framework API takes or returns one (Spring `Trigger`) and in in-memory arithmetic.
+**STY-29** — Persisted and DTO timestamps are `Instant`, stored in a `timestamptz` column: a point in time has no zone, so equality and ordering need no care and the value is the same on every host. On the wire it is ISO-8601 in UTC (`2026-11-13T05:00:00Z`), and the client shows it in the user's zone; a request value may carry any offset (`2026-11-13T14:00:00+09:00`) and is read as the same instant. `ZonedDateTime` and `LocalDateTime` appear only in in-memory arithmetic that needs the application time zone — a date boundary (STY-30) — and never in an entity, a DTO or a signature between beans. A calendar date with no time of day — a birthday, a due date, a business day — is a `LocalDate` in a `date` column, never a midnight timestamp, whose date shifts with the zone it is read in.
 
 **STY-30** — A date boundary — today, the current year or month, a code number's date part — uses the application time zone (e.g. `appProperties.timeZone`, bound from `app.time-zone`): `LocalDate.now(appProperties.timeZone)`, `Year.now(appProperties.timeZone)`. Never `ZoneId.systemDefault()`: containers run in UTC and local machines in the developer's zone (e.g. Asia/Seoul), so the same instant falls on different dates.
 
 **STY-31** — A time-of-day cron — an `@Scheduled(cron = …)` that fires at a wall-clock time — declares the application time zone: `@Scheduled(cron = "0 0 3 * * *", zone = "\${app.time-zone}")`.
 
-**STY-32** — Compare and order `ZonedDateTime` values through `isBefore`/`isAfter`/`isEqual` or `toInstant()`, never `equals`/`==` or the comparison operators and ordering functions on the raw value (`<`, `<=`, `compareTo`, `maxOf`, `sortedBy`): `equals` also compares the zone, and `compareTo` breaks a tie between equal instants by local date-time and zone, so one instant in two zones is unequal (`09:00+09:00` vs `00:00Z`: `isEqual` is true, `a <= b` is false).
+**STY-32** — Where a `ZonedDateTime` still appears (STY-29), compare and order it through `isBefore`/`isAfter`/`isEqual` or `toInstant()`, never `equals`/`==` or the comparison operators and ordering functions on the raw value (`<`, `<=`, `compareTo`, `maxOf`, `sortedBy`): `equals` also compares the zone, and `compareTo` breaks a tie between equal instants by local date-time and zone, so one instant in two zones is unequal (`09:00+09:00` vs `00:00Z`: `isEqual` is true, `a <= b` is false). An `Instant` has none of this; compare it with the plain operators.
 
 **STY-33** — A duration in code is a `java.time.Duration`: `Duration.ofSeconds(30)`, not `const val X_SECONDS = 30L` multiplied by `1000L` at the use site.
 
 ---
 
-**STY-58** — Production code reads the current time from an injected `java.time.Clock` bean (`ZonedDateTime.now(clock)`, `Instant.now(clock)`), never the no-argument `now()`. The bean is `Clock.system(<application zone>)`. A date boundary in the application time zone (STY-30) — "today", a numbering year, an expiry — is then testable at any instant: the test support replaces the bean with a fixed or offset clock. An entity takes the time as a parameter (`delete(now)`, `isExpiredAt(now)`; REP-34) instead of holding a clock. Auditing timestamps filled by `AuditingEntityListener` use a `DateTimeProvider` backed by the same clock. Test code may call `now()` to build fixtures.
+**STY-58** — Production code reads the current time from an injected `java.time.Clock` bean (`Instant.now(clock)`, `LocalDate.now(clock)`), never the no-argument `now()`. The bean is `Clock.system(<application zone>)`. A date boundary in the application time zone (STY-30) — "today", a numbering year, an expiry — is then testable at any instant: the test support replaces the bean with one mutable test clock ([TST-35](testing.md#11-time-waiting-and-files)). An entity takes the time as a parameter (`delete(now)`, `isExpiredAt(now)`; REP-34) instead of holding a clock. Auditing timestamps filled by `AuditingEntityListener` use a `DateTimeProvider` backed by the same clock. Test code may call `now()` to build fixtures.
 
 ## 12. Logging
 
@@ -367,7 +372,7 @@ Both rules are review judgments, not machine-detectable.
 | List only what changed | Never reflection-dump the full state, and no exclusion patches (blocking annotations, `snapshot()` overrides) — list each assigned field explicitly |
 | Sensitive fields | Log the fact only, never the value (`"Member password updated: id=$id"`) |
 | Large collections and binary | Log a summary, not the contents — e.g. a `count`/`cardinality`, never a `List` that can hold tens of thousands of elements or a `ByteArray` |
-| Associations | By id (`memberId=${member.id}`) — interpolating the entity triggers LAZY initialization and N+1. A collection by its count (`itemCount=${items.size}`, only when the method already loaded it) or the id of the element it adds or removes (`itemId=${item.id}`) — never an id list, which initializes a LAZY collection and is unbounded |
+| Associations | By id (`orderId=${order.id}`; another domain's row is already an id field, [REP-15](repository.md#6-entity-mapping)) — interpolating the entity triggers LAZY initialization and N+1. A collection by its count (`itemCount=${items.size}`, only when the method already loaded it) or the id of the element it adds or removes (`itemId=${item.id}`) — never an id list, which initializes a LAZY collection and is unbounded |
 | Mutation in a private helper | List what the helper assigns at the call site (e.g. `Order.clearItems()`); do not move the log into the helper (the action phrase differs per caller) |
 | Constant assignments | Omit fields whose value is a constant for that method — the action phrase already carries it (`Member.delete(now)` → `deletedAt` only; `Order.reopen()` → `id` only). Exception: the transition's primary field stays even when constant (`Order.hold()` → `status=ON_HOLD`) |
 | No-op guard placement | An early return on the state-change method's first line, not an `if` at the call site — the compared value is the entity's own (`Product.update`). Exception: the service owns the guard when it must also skip event publishing or a return value |
@@ -403,7 +408,7 @@ Repetition:
 
 | Situation | Rule |
 |---|---|
-| A timer or an unbounded loop repeats the same failure | Log WARN or ERROR when the failure starts, DEBUG while it persists, and INFO when it recovers. Use one field in the same class, not a helper class (STY-28) |
+| A timer or an unbounded loop repeats the same failure | Log WARN or ERROR when the failure starts, DEBUG while it persists, and INFO when it recovers. Use one thread-safe field (STY-59) in the same class, not a helper class (STY-28) |
 | The same input keeps arriving (an unknown code, an address collision) | Log WARN once per key and DEBUG afterwards. The key identifies the same fact, for example source id plus address |
 | A bounded retry (`withRetry`, a redelivery limit) | Log WARN per attempt and ERROR when the retries run out |
 | Read-only access that exposes file contents: download, preview, stream, static file access | INFO once per user action. Thumbnails, later byte ranges of the same content and cache hits are DEBUG. Plain list, detail and search queries log nothing |
@@ -456,6 +461,10 @@ retryTemplate.execute { paymentClient.getPayment(paymentId) }
 
 **STY-46** — Long-running work — a consumer, a socket, a scheduler of its own — starts on `ApplicationReadyEvent` and stops in `@PreDestroy`.
 
+**STY-59** — A bean is one instance shared by every request thread. A field that changes after construction is a thread-safe type — `AtomicReference`/`AtomicLong`, `ConcurrentHashMap`, or a `@Volatile` flag that one thread writes — never a plain `var`, `mutableListOf()` or `mutableMapOf()`, and a read-check-write on it goes through the type's atomic operation (`compute`, `updateAndGet`, `putIfAbsent`). Data of one request never lives in a bean field: pass it as a parameter. A handle assigned once in the start callback and closed in `@PreDestroy` (STY-46) may stay a `lateinit var`; one that is reassigned later, on a reconnect, is `@Volatile`. State that every instance of the service must agree on lives in the database or Redis ([TX-8](transactions.md#4-lock-selection)), not in memory.
+
+✅ `private val failing = AtomicBoolean(false)` — ❌ `private var failing = false` · `private val membersById = mutableMapOf<UUID, Member>()`
+
 ---
 
 ## 15. Files and streams
@@ -490,7 +499,7 @@ Globally installed skills (`ponytail`, `superpowers`, `supabase-postgres-best-pr
 |---|---|---|
 | ponytail — "no interface with one implementation" | [REP-2](repository.md#21-priority) · [REP-3](repository.md#2-query-construction) · STY-28 | `Custom*Repository` + `Custom*RepositoryImpl` stay even with a single implementation — the Spring Data `*Impl` fragment mechanism registers the bean only in that shape |
 | ponytail — "Fewest files possible" | STY-12 · STY-14 | One top-level type per file (five carve-outs). Command/Result and Request/Response sit at the directory root, one class per file, no subfolders |
-| ponytail — "an `assert`-based `demo()`/`__main__` self-check or one small `test_*.py`. No frameworks, no fixtures" | [TST-2](testing.md#2-test-infrastructure) · [TST-5](testing.md#3-test-structure) · [TST-6](testing.md#3-test-structure) | Extend `SpringBootTestSupport`, group with `@Nested`, write the backtick method name in Korean. ponytail assumes Python; the instruction does not transfer |
+| ponytail — "an `assert`-based `demo()`/`__main__` self-check or one small `test_*.py`. No frameworks, no fixtures" | [TST-2](testing.md#2-test-infrastructure) · [TST-5](testing.md#3-test-structure) · [TST-6](testing.md#3-test-structure) | Extend the layer's test support class, group with `@Nested`, write the backtick method name as an English sentence. ponytail assumes Python; the instruction does not transfer |
 | ponytail — "mark a deliberate simplification with a `ponytail:` comment" | STY-18 | Allowed in the STY-18 form: one `// ponytail:` line comment in Korean naming the limit and how to lift it. Never `#`, never an English sentence |
 | supabase-postgres-best-practices — performance advice phrased as raw SQL | [REP-1](repository.md#2-query-construction) · [REP-2](repository.md#21-priority) | **Take the diagnosis** (index choice, query plan, lock mode) and **reject the form**: derived query → QueryDSL → composition in the Service. `@Query` and `@Modifying` stay banned |
 
@@ -551,7 +560,7 @@ For the same operation, the service input and the wire **share the verb-object a
 | `<domain>.controller` | `@RestController` classes |
 | `<domain>.controller.rest` | `*Request` / `*Response` ([CTL-5](controller.md#41-inner-data-classes)) |
 | `<domain>.<broker>` (e.g. `order.kafka`) | inbound message handlers (`*Listener`) of that broker, never in a Service package ([CTL-24](controller.md#10-non-http-inbound-adapters)) |
-| `<domain>.service` | `@Service` use cases and role-suffixed `@Component` beans ([SVC-30](service.md#10-service-vs-component)) |
+| `<domain>.service` | `@Service` use cases, `*Facade` flows ([TX-3](transactions.md#3-external-calls-and-compensation)) and role-suffixed `@Component` beans ([SVC-30](service.md#10-service-vs-component)) |
 | `<domain>.service.command` | `*Command` / `*Result` ([SERVICE §3](service.md#3-command-and-result)) |
 | `<domain>.repository` | repositories, `Custom*Repository` / `Custom*RepositoryImpl` |
 | `<domain>.repository.query` | `*Query` |

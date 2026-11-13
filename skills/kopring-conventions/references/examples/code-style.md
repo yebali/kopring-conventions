@@ -1,6 +1,6 @@
 # Code Style — Worked Examples
 
-Rule text, exceptions and carve-outs live in [code-style.md](../code-style.md); this file carries only `❌ Bad` / `✅ Good` code.
+Rule text, exceptions and carve-outs live in [code-style.md](../code-style.md); this file carries only `❌ Bad` / `✅ Good` code. Except where an example is about KDoc, the KDoc summaries of [STY-16](../code-style.md#5-comments-and-kdoc) are left out so the rule shown stays in focus; production code carries them.
 
 ## STY-1 — Logger base class
 
@@ -106,21 +106,25 @@ fun createOrder(command: CreateOrderCommand): OrderResult {
 ## STY-11 — Named arguments
 
 ```kotlin
-// ❌ Bad — positional; swapping two arguments still compiles
-createMember(name, email, true, false)
+// ❌ Bad — position says nothing: two Booleans, two UUIDs, a bare literal
+createMember(profile, true, false)
 order.assign(memberId, warehouseId)
+saveProduct(category, 10)
 
-// ✅ Good
-createMember(name = name, email = email, active = true, admin = false)
+// ✅ Good — the ambiguous arguments are named
+createMember(profile, active = true, admin = false)
 order.assign(memberId = memberId, warehouseId = warehouseId)
+saveProduct(category, stock = 10)
 
-// ✅ Exempt — lambda is the only argument
+// ✅ Good — different types and no literal: positional is enough (naming them is allowed too)
+reserveStock(item, warehouses)
+
+// ✅ Not applicable — lambda is the only argument, or stays trailing
 list.map { it.name }
-// ✅ Exempt — other args named, lambda stays trailing
-executor.execute(key = key) { process() }
-// ✅ Exempt — QueryDSL / fluent builder chain
+executor.execute(key) { process() }
+// ✅ Not applicable — QueryDSL / fluent builder chain
 qOrder.status.eq(status).and(qOrder.deleted.isFalse)
-// ✅ Exempt — symmetric comparison/math function and vararg call
+// ✅ Not applicable — symmetric comparison/math function and vararg call
 maxOf(0, offset)
 lockPaths(source, target)
 ```
@@ -128,7 +132,7 @@ lockPaths(source, target)
 ## STY-16 · STY-17 — Summaries and line comments
 
 ```kotlin
-// ❌ Bad — no class summary, every executable line commented even when self-explanatory
+// ❌ Bad — no summaries on the public type and function, and a self-explanatory line commented
 class Shipment(...)
 
 enum class ShipmentStatus { READY, SHIPPED }
@@ -137,16 +141,22 @@ fun assign(warehouseId: UUID) {
     queue.push(ShipmentKey(orderId = orderId, lineNo = lineNo)) // 주문-품목 단위 배정 키를 큐에 넣는다
 }
 
-// ✅ Good — one-line class summary, self-explanatory function left bare
+// ✅ Good — one-line summaries that add a fact the name does not carry, the self-explanatory line left bare
 /** 창고에 배정된 주문 품목 단위의 출고 작업. */
 @Entity
 class Shipment(...)
 
+/** 출고 상태. READY 는 창고 배정 전, SHIPPED 는 창고 출발 후다. */
 enum class ShipmentStatus { READY, SHIPPED }
 
+/** 이 출고를 창고의 배정 대기열 끝에 넣는다. */
 fun assign(warehouseId: UUID) {
     queue.push(ShipmentKey(orderId = orderId, lineNo = lineNo))
 }
+
+// ❌ Bad — a summary that only turns the name into a sentence
+/** 배정한다. */
+fun assign(warehouseId: UUID) { ... }
 ```
 
 **Comment only where the logic is genuinely easy to get wrong:**
@@ -168,15 +178,17 @@ if (local.updatedAt.isEqual(remote.updatedAt)) return remote // 동시 갱신 �
 ```kotlin
 // ❌ column-aligned (no-multi-spaces) + comment after a lambda's opening brace (function-literal)
 checkMember(command.memberId)
-val order = transactionRunner.inTx {                       // 주문번호 채번은 주문 저장이 실패해도 롤백하지 않는다
-    orderRepository.save(...)
+val candidates = buildList {                               // 직영 창고를 위탁 창고보다 먼저 본다
+    addAll(ownWarehouses)
+    addAll(partnerWarehouses)
 }
 
 // ✅ exactly one space; the lambda's comment moves to its own line above the statement
 checkMember(command.memberId)
-// 주문번호 채번은 주문 저장이 실패해도 롤백하지 않는다
-val order = transactionRunner.inTx {
-    orderRepository.save(...)
+// 직영 창고를 위탁 창고보다 먼저 본다
+val candidates = buildList {
+    addAll(ownWarehouses)
+    addAll(partnerWarehouses)
 }
 ```
 

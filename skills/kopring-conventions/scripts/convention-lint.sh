@@ -35,10 +35,16 @@
 #   STY-17 history word in a comment (기존에는 · 예전에는 · 이전에는 · 바뀌었다 · 옮겼다 · 대체했다) (main + test).
 #       A rationale written without one of these words stays agent-judged.
 #   STY-30 ZoneId.systemDefault() (main).
+#   STY-36 `$command` / `$request` / `$properties` interpolated whole into a logger line (main).
 #   STY-43 Executors.new* (main).
 #   STY-45 a retry predicate defaulting to `{ true }` (main).
 #   STY-58 no-argument `ZonedDateTime/OffsetDateTime/LocalDateTime/LocalDate/Instant.now()` (main).
-#   SVC-13 Hangul inside a thrown message — `throw X(…)`, `require`, `check`, `requireNotNull`,
+#   STY-59 in a file with a column-0 bean stereotype: a member `private|protected|internal var`, or such a
+#       `val` initialised with a plain mutable collection, unless @Volatile (main). Not flagged: a
+#       `lateinit var` (the lifecycle handle the rule allows). Blind spots: a public `var`, a prototype- or
+#       request-scoped bean, a meta-annotated stereotype.
+#   SVC-9  `fun validate*` (main; an `override` is skipped).
+#   SVC-13 Hangul inside a thrown message — `throw X(…)`, `requireValid`, `require`, `check`, `requireNotNull`,
 #       `checkNotNull`, `error(` not called on a receiver (main). Blind spot: a message built on a later line.
 #   SVC-15 direct throw of a generic/base exception (main, `*Service.kt` and `service/command/` only).
 #       Blind spot: generics thrown from a lambda (`orElseThrow { NoSuchElementException(…) }`).
@@ -46,8 +52,17 @@
 #   SVC-24 `.constraintName` — Hibernate's message-parsed constraint name (main).
 #   SVC-34 `fallbackExecution = true` on an AFTER_ROLLBACK/AFTER_COMPLETION listener, or an AFTER_COMMIT/
 #       BEFORE_COMMIT listener without it (main). Blind spot: an annotation whose arguments span lines.
-#   TX-1   class-level @Transactional — column-0 heuristic (main only; test classes may carry it).
+#   TX-1   a file with a class-level @Service but no class-level @Transactional, reported at @Service; a
+#       class-level @Transactional in a file without @Service, reported at @Transactional (main). Blind spot: a
+#       module without transactions, whose entry-point @Service goes in `.convention-lint-ignore`.
+#   TX-2   a `val …: *Client` in a file with a class-level @Service (main). Blind spot: an outbound bean
+#       whose type does not end in Client (a remote *Reader, a mail sender).
+#   TX-18  @Transactional / @Async / @Retryable / @Cacheable / @CacheEvict / @CachePut on a `private fun` (main).
+#       Blind spot: self-invocation of a public method stays agent-judged.
+#   CTL-2  @RequestMapping("…") whose path does not start with /api/v<N> (main). Blind spots: the
+#       `value = […]` form, and a controller mapped only at method level.
 #   CTL-3  `required = false` (main).
+#   CTL-6  `import ….entity.…` in a file under controller/rest/ (main).
 #   CTL-10 @Operation( / @Tag( (main).
 #   CTL-12 Include.NON_NULL (main).
 #   CTL-14 Bean Validation — `import jakarta.validation` / `import javax.validation`, `@Validated` (main).
@@ -56,21 +71,37 @@
 #   REP-1  @Query / @Modifying (main).
 #   REP-3  stereotype on Custom*RepositoryImpl (main).
 #   REP-4  @Transactional on Custom*RepositoryImpl (main).
-#   REP-8  a bulk delete named `deleteAllBy*` in Custom*RepositoryImpl (main).
+#   REP-8  a bulk delete named `deleteAllBy*` in Custom*RepositoryImpl; `fun get*` other than Spring Data's
+#       own `getReferenceById` in *Repository.kt / *RepositoryImpl.kt (main).
 #   REP-10 PageImpl( (main).
 #   REP-14 @Column(… unique = true …) (main).
 #   REP-15 @ManyToOne without FetchType.LAZY (main). Blind spot: an annotation whose arguments span lines.
-#   REP-27 @SQLRestriction / @SQLDelete / @Where( (main).
-#   TST-6  @DisplayName (test).
+#   REP-16 @Enumerated without EnumType.STRING on the same line (main).
+#   REP-27 @SQLRestriction / @SQLDelete / @Where( / @SoftDelete (main).
+#   REP-35 `data class` annotated @Entity / @Embeddable / @MappedSuperclass (main).
+#   REP-40 `.between(` on a path named *At / *Date / *Time / *Timestamp (main).
+#   REP-44 `fun findAllBy*` in *Repository.kt / *RepositoryImpl.kt (main). A Redis repository's derived
+#       list read goes in `.convention-lint-ignore`.
+#   REP-42 `Optional<`, `.orElseThrow`, `.orElseGet(`, `findById(…).get()/.isPresent/.isEmpty/.orElse(`
+#       (main; an `override fun` signature is skipped). `getReferenceById` stays agent-judged.
+#   CFG-15 a Kotlin default on a constructor property in *Properties.kt (main). Blind spot: a properties
+#       class declared in its @Configuration's file.
+#   TST-5  a backtick class name with Hangul (test).
+#   TST-6  @DisplayName; a backtick `fun` name with Hangul; a @Test / @ParameterizedTest `fun` with a
+#       plain name (test).
 #   TST-21 stdlib `assert(` and JUnit/kotlin.test assertEquals/assertTrue/assertFalse/assertNull/
 #       assertNotNull/assertThrows (test).
 #   TST-26 restoreSharedDoubles (test).
 #   TST-27 `relaxed = true` (test).
+#   TST-31 Files.createTempDirectory / createTempFile without a parent directory, deleteOnExit( (test).
+#       Blind spot: a prefix passed as a variable.
 #   TST-33 @DirtiesContext / @TestPropertySource / @ActiveProfiles / @WebMvcTest / @DataJpaTest outside
 #       *TestSupport.kt (test). The migration guard test of COV-10 goes in `.convention-lint-ignore`.
 #
 # Stays agent-judged (deliberately not here): STY-9 lambda layout, Thread.sleep in tests (TST-29
-# tolerates createdAt spacing), everything else in the Hard Rules tables. STY-10 has its own script,
+# tolerates createdAt spacing), STY-33 unit-suffixed constants (an annotation argument must be a number),
+# STY-54 package names (a shared module may own an `api` package), REP-43 `findAll()` (most hits are
+# tables bounded by design), everything else in the Hard Rules tables. STY-10 has its own script,
 # blank-line-before-return.sh.
 set -uo pipefail
 # [가-힣] 범위가 다른 멀티바이트 문자에 걸리지 않도록 설치된 UTF-8 로케일로 grep 한다
@@ -79,7 +110,8 @@ for loc in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
 done
 
 ALL=$(mktemp) MAIN=$(mktemp) TEST=$(mktemp) SRC=$(mktemp) REPO_IMPL=$(mktemp) SVC=$(mktemp) OUT=$(mktemp)
-trap 'rm -f "$ALL" "$MAIN" "$TEST" "$SRC" "$REPO_IMPL" "$SVC" "$OUT"' EXIT
+REST=$(mktemp) REPO=$(mktemp) PROPS=$(mktemp) SVCBEAN=$(mktemp)
+trap 'rm -f "$ALL" "$MAIN" "$TEST" "$SRC" "$REPO_IMPL" "$SVC" "$OUT" "$REST" "$REPO" "$PROPS" "$SVCBEAN"' EXIT
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)
 # every argument becomes a ROOT-relative path, whatever the current directory
@@ -103,6 +135,11 @@ if [ ! -s "$SRC" ]; then
 fi
 grep '/Custom[^/]*RepositoryImpl\.kt$' "$MAIN" > "$REPO_IMPL"
 grep -E 'Service\.kt$|/service/command/' "$MAIN" > "$SVC"
+grep -E '/controller/(.*/)?rest/' "$MAIN" > "$REST"
+grep -E 'Repository(Impl)?\.kt$' "$MAIN" > "$REPO"
+grep 'Properties\.kt$' "$MAIN" > "$PROPS"
+CLASS_ANNOT='^(@[A-Za-z]+(\([^)]*\))? +)*'                 # annotations that may share the line, before the one looked for
+[ -s "$MAIN" ] && tr '\n' '\0' < "$MAIN" | xargs -0 grep -lE "${CLASS_ANNOT}@Service([^A-Za-z0-9_]|\$)" > "$SVCBEAN"
 
 g() { [ -s "$1" ] && tr '\n' '\0' < "$1" | xargs -0 grep -nHE "$2"; }   # file-list, pattern → file:line:content
 # 한글 음절(U+AC00–U+D7A3)의 UTF-8 바이트 패턴 — C 로케일 grep 으로 쓴다. GNU grep 3.11 은 C.UTF-8 에서
@@ -117,7 +154,19 @@ g "$MAIN" '@Query\(|@Modifying'           | fmt '[REP-1] @Query/@Modifying prohi
 g "$MAIN" '@ResponseStatus'               | grep -vE 'HttpStatus\.(CREATED|NO_CONTENT)\)' | fmt '[CTL-18] @ResponseStatus only CREATED (creating POST) or NO_CONTENT (body-less PUT/DELETE) — everything else is default 200 OK'
 g "$MAIN" "import (jakarta|javax)\.validation|@Validated$ANNOT_END" | fmt '[CTL-14] Bean Validation prohibited — Command.init{} / Service check*()'
 g "$SRC" '@Suppress\("UNCHECKED_CAST"\)'  | fmt '[STY-8] UNCHECKED_CAST suppress forbidden — use type-safe expressions'
-g "$MAIN" "^@Transactional$ANNOT_END"     | fmt '[TX-1] class-level @Transactional forbidden — method-level in Service only'
+# TX-1: per file, a class-level @Service needs a class-level @Transactional, and nothing else carries one
+[ -s "$MAIN" ] && tr '\n' '\0' < "$MAIN" | xargs -0 awk -v pre="$CLASS_ANNOT" '
+  function flush() {
+    if (svc && !tx) print f ":" svc ": [TX-1] @Service without class-level @Transactional — annotate the class, readOnly = true on its read methods"
+    if (tx && !svc) print f ":" tx ": [TX-1] class-level @Transactional on a bean that is not a @Service — a transaction is a Service method"
+  }
+  FNR == 1 { if (NR > 1) flush(); f = FILENAME; svc = 0; tx = 0 }
+  $0 ~ pre "@Service([^A-Za-z0-9_]|$)" { svc = FNR }
+  $0 ~ pre "@Transactional([^A-Za-z0-9_]|$)" { tx = FNR }
+  END { if (NR > 0) flush() }
+' >> "$OUT"
+g "$SVCBEAN" '(^|[(,[:space:]])val [A-Za-z0-9_]+: [A-Za-z0-9_.]*Client([,)[:space:]]|$)' |
+    fmt '[TX-2] outbound client injected into a @Service — call it from a Facade, a listener or the controller gate'
 
 g "$SVC" 'throw (BusinessException|IllegalStateException|IllegalArgumentException|RuntimeException|Exception|UnsupportedOperationException)\(' |
     fmt '[SVC-15] generic/base exception thrown directly — use a named domain subclass with dedicated ErrorCode'
@@ -130,7 +179,7 @@ g "$MAIN" "@Lazy$ANNOT_END"               | fmt '[SVC-20] @Lazy forbidden — mo
 g "$MAIN" 'ZoneId\.systemDefault\(\)'     | fmt '[STY-30] ZoneId.systemDefault() forbidden — use the application time zone'
 g "$MAIN" 'Executors\.new'                | fmt '[STY-43] Executors.new* inside a bean forbidden — use a Spring-managed executor'
 g "$MAIN" 'PageImpl\('                    | fmt '[REP-10] PageImpl forbidden — PageableExecutionUtils.getPage / Page.empty'
-g "$MAIN" "@SQLRestriction|@SQLDelete|@Where\(" | fmt '[REP-27] global soft-delete filter forbidden — state deletedAt.isNull in the query'
+g "$MAIN" "@SQLRestriction|@SQLDelete|@Where\(|@SoftDelete$ANNOT_END" | fmt '[REP-27] soft-delete annotation that cannot be switched off — use the shared @Filter'
 g "$MAIN" '[Rr]etryable[^=]*=[[:space:]]*\{[[:space:]]*true[[:space:]]*\}' | fmt '[STY-45] retry predicate defaults to true — the caller must state what is safe to retry'
 g "$MAIN" '(ZonedDateTime|OffsetDateTime|LocalDateTime|LocalDate|Instant)\.now\(\)' | fmt '[STY-58] no-argument now() — read the time from the injected Clock'
 g "$MAIN" '\.constraintName' | fmt '[SVC-24] constraint name parsed from the message — read PSQLException.serverErrorMessage.constraint'
@@ -142,6 +191,19 @@ g "$MAIN" "$LISTENER" | grep -vE 'AFTER_ROLLBACK|AFTER_COMPLETION|fallbackExecut
 g "$MAIN" '@Column\([^)]*unique[[:space:]]*=[[:space:]]*true' | fmt '[REP-14] @Column(unique = true) — declare a named @Table(uniqueConstraints), none on a soft-delete column'
 g "$MAIN" '@ManyToOne([[:space:]]|$|\([^)]*\))' | grep -v 'FetchType\.LAZY' | fmt '[REP-15] @ManyToOne without fetch = FetchType.LAZY — the JPA default is EAGER'
 g "$REPO_IMPL" 'fun deleteAllBy'          | fmt '[REP-8] bulk delete named deleteAllBy* — name it bulkDeleteBy*'
+g "$REPO" 'fun findAllBy[A-Z]'            | fmt '[REP-44] derived list query — the one listByQuery(List*Query) of the repository'
+g "$REPO" '^[[:space:]]*(override[[:space:]]+)?fun get[A-Z]' | grep -v 'fun getReferenceById' | fmt '[REP-8] get* on a repository — find* for one row, list*/page* for several'
+g "$MAIN" '@RequestMapping\("'           | grep -vE '@RequestMapping\("/api/v[0-9]+(/|")' | fmt '[CTL-2] endpoint outside /api/v1 — every controller is mapped under /api/v1'
+g "$REST" '^import .*\.entity\.'          | fmt '[CTL-6] entity import in a Request/Response — build the Response from a Result'
+g "$MAIN" "@Enumerated$ANNOT_END"         | grep -vE '\((value[[:space:]]*=[[:space:]]*)?(EnumType\.)?STRING\)' | fmt '[REP-16] @Enumerated without EnumType.STRING — the default stores the ordinal'
+g "$MAIN" '(^|[[:space:]])fun validate[A-Z(]' | grep -v 'override' | fmt '[SVC-9] validate* prefix — check* throws, verify* returns a result'
+g "$MAIN" '(logger|log)\.(debug|info|warn|error).*(\$\{(command|request|properties)\}|\$(command|request|properties)([^A-Za-z0-9_]|$))' |
+    fmt '[STY-36] whole command/request/properties object in a log line — list the fields the message needs'
+g "$PROPS" '(^[[:space:]]+(@[^ ]+ +)*val [A-Za-z0-9_]+: [^=]+ = [^/]*,[[:space:]]*(//.*)?$)|(class [^(]*\(.*val [A-Za-z0-9_]+: [^,)=]+ = )' |
+    fmt '[CFG-15] Kotlin default on a properties field — the default lives in the yml placeholder'
+g "$MAIN" '(At|Date|Time|Timestamp)\.between\(' | fmt '[REP-40] between on a time path includes both ends — goe(from) and lt(to)'
+g "$MAIN" 'Optional<|\.orElseThrow|\.orElseGet\(|findById\([^)]*\)\.(get\(\)|isPresent|isEmpty|orElse\()' | grep -v 'override fun' |
+    fmt '[REP-42] Optional in Kotlin code — findByIdOrNull(id) ?: throw'
 
 BASE_PACKAGE=${BASE_PACKAGE:-}
 if [ -z "$BASE_PACKAGE" ]; then
@@ -163,7 +225,7 @@ g "$MAIN" 'LoggerFactory|KotlinLogging\.logger' |
     { if [ -n "$LOGGER_BASE" ]; then grep -vF "$LOGGER_BASE"; else cat; fi; } |
     fmt '[STY-1] use the project logger idiom (inherited `logger`) — never LoggerFactory or a per-class KotlinLogging.logger'
 LC_ALL=C g "$MAIN" "\"[^\"]*$HANGUL" | LC_ALL=C sed -E 's#[[:space:]]//[[:space:]].*$##' |
-    LC_ALL=C grep -E ":[0-9]+:.*(throw [A-Z][A-Za-z]*\\(|[^.A-Za-z_](require|check|requireNotNull|checkNotNull|error)\\().*\"[^\"]*$HANGUL" |
+    LC_ALL=C grep -E ":[0-9]+:.*(throw [A-Z][A-Za-z]*\\(|[^.A-Za-z_](requireValid|require|check|requireNotNull|checkNotNull|error)\\().*\"[^\"]*$HANGUL" |
     fmt '[SVC-13] thrown message must be English — Korean belongs in the line comment'
 
 HIST='(//|/\*\*|^[[:space:]]*\*).*(기존에는|예전에는|이전에는|바뀌었다|옮겼다|대체했다)'
@@ -225,10 +287,47 @@ tr '\n' '\0' < "$SRC" | xargs -0 awk '
 g "$REPO_IMPL" "@(Repository|Component)$ANNOT_END" | fmt '[REP-3] stereotype on Custom*RepositoryImpl forbidden — *Impl suffix auto-registers'
 g "$REPO_IMPL" "@Transactional$ANNOT_END"          | fmt '[REP-4] @Transactional on Custom*RepositoryImpl forbidden — transaction boundary belongs to the calling Service'
 
-g "$TEST" '@DisplayName'                  | fmt '[TST-6] @DisplayName forbidden — the Korean backtick method name carries the description'
+g "$TEST" '@DisplayName'                  | fmt '[TST-6] @DisplayName forbidden — the backtick method name carries the description'
 g "$TEST" '(^|[^.A-Za-z])(assert|assertEquals|assertTrue|assertFalse|assertNull|assertNotNull|assertThrows)\(' |
     fmt '[TST-21] non-AssertJ assertion forbidden — AssertJ assertThat shows actual vs expected'
 g "$TEST" 'relaxed[[:space:]]*=[[:space:]]*true' | fmt '[TST-27] relaxed mock forbidden — strict mocks, relaxUnitFun = true only'
+g "$TEST" 'Files\.createTemp(Directory|File)\(("|null)|deleteOnExit\(' | fmt '[TST-31] hand-made temporary file — use @TempDir'
+LC_ALL=C g "$TEST" "fun \`[^\`]*$HANGUL"   | fmt '[TST-6] Korean test name — an English sentence in backticks'
+LC_ALL=C g "$TEST" "class \`[^\`]*$HANGUL" | fmt '[TST-5] Korean @Nested class name — an English phrase in backticks'
+
+# Annotation-driven checks: a declaration is judged with the annotations right above it and on its own line.
+# `a` collects those annotation lines (a multi-line argument list included); any other line clears it.
+ANN_AWK='
+  function hit(id, msg) { print FILENAME ":" FNR ": [" id "] " msg }
+  function parens(s,   u, o, c) { u = s; o = gsub(/\(/, "", u); u = s; c = gsub(/\)/, "", u); return o - c }
+  FNR == 1 { a = ""; depth = 0; bean = 0 }
+  /^@(Service|Component|RestController|Controller|Repository|Configuration)([^A-Za-z0-9_]|$)/ { bean = 1 }
+  {
+    t = $0; gsub(/"[^"]*"/, "\"\"", t); sub(/[[:space:]]*\/\/.*$/, "", t)
+    if (depth > 0) { a = a " " t; depth += parens(t); next }
+    full = a " " t
+    if (t ~ /^[[:space:]]*@/ && t !~ /(^|[[:space:])])(fun|class|interface|object|val|var)[[:space:]]/) {
+      a = full; depth = parens(t); if (depth < 0) depth = 0
+      next
+    }
+    if (mode == "main") {
+      if (t ~ /(^|[[:space:]])private[[:space:]]+((suspend|inline|tailrec)[[:space:]]+)*fun[[:space:]]/ &&
+          full ~ /@(Transactional|Async|Retryable|Cacheable|CacheEvict|CachePut)([^A-Za-z0-9_]|$)/)
+        hit("TX-18", "proxy annotation on a private method does nothing — a public method another bean calls")
+      if (t ~ /(^|[[:space:]])data[[:space:]]+class[[:space:]]/ && full ~ /@(Entity|Embeddable|MappedSuperclass)([^A-Za-z0-9_]|$)/)
+        hit("REP-35", "JPA type declared as a data class — a plain class without equals/hashCode")
+      if (bean && full !~ /@(Volatile|Autowired|Value)([^A-Za-z0-9_]|$)/ &&
+          (t ~ /^    ((private|protected|internal)[[:space:]]+)+var[[:space:]]/ ||
+           t ~ /^    ((private|protected|internal)[[:space:]]+)+val[[:space:]]+[A-Za-z0-9_]+[^=]*=[[:space:]]*(mutable(List|Map|Set)Of|HashMap|ArrayList|HashSet|LinkedHashMap|ArrayDeque)[[:space:]]*[<(]/))
+        hit("STY-59", "mutable field on a singleton bean — a thread-safe type (Atomic*, ConcurrentHashMap, @Volatile)")
+    } else if (full ~ /@(Test|ParameterizedTest|RepeatedTest|TestFactory)([^A-Za-z0-9_]|$)/ && t ~ /(^|[[:space:]])fun[[:space:]]+[A-Za-z_]/)
+      hit("TST-6", "test method without a backtick name — an English sentence in backticks")
+    a = ""
+  }
+'
+ann() { [ -s "$1" ] && tr '\n' '\0' < "$1" | xargs -0 awk -v mode="$2" "$ANN_AWK" >> "$OUT"; }
+ann "$MAIN" main
+ann "$TEST" test
 g "$TEST" 'restoreSharedDoubles'          | fmt '[TST-26] restoreSharedDoubles is obsolete — springmockk clears shared mocks after each test'
 g "$TEST" "@(DirtiesContext|TestPropertySource|ActiveProfiles|WebMvcTest|DataJpaTest)$ANNOT_END" | grep -v 'TestSupport\.kt:' |
     fmt '[TST-33] forks the shared Spring context — configure it once in the test support'

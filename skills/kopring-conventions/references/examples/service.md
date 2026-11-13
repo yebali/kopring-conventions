@@ -1,6 +1,6 @@
 # Service — Worked Examples
 
-Rule text and exceptions live in [service.md](../service.md) and [transactions.md](../transactions.md); each heading names the rule IDs it illustrates.
+Rule text and exceptions live in [service.md](../service.md) and [transactions.md](../transactions.md); each heading names the rule IDs it illustrates. The KDoc summaries of [STY-16](../code-style.md#5-comments-and-kdoc) are left out so the rule shown stays in focus; production code carries them.
 
 ## SVC-9 — Validation method naming
 
@@ -17,9 +17,9 @@ private fun validateNotCanceled(order: Order) { ... }
 Canonical "reject unknown ids" idiom — collect **all** missing ids, then throw the domain's named exception:
 
 ```kotlin
-// ✅ structural check stays in the Command
+// ✅ structural check stays in the Command, through requireValid (SVC-15)
 data class CreateOrderCommand(val productIds: List<UUID>) {
-    init { if (productIds.isEmpty()) throw EmptyOrderItemsException() }
+    init { requireValid(productIds.isNotEmpty()) { "productIds must not be empty" } }
 }
 // ✅ business check is a private Service check* (in ProductService — its own domain's exception, SVC-14)
 private fun checkProductsExist(ids: List<UUID>) {
@@ -43,10 +43,13 @@ class OrderNotFoundException(orderId: UUID, cause: Throwable? = null) : EntityNo
 ORDER_NOT_FOUND("ORDER-1000", HttpStatus.NOT_FOUND.value(), "Order not found"),
 ORDER_ALREADY_CANCELED("ORDER-1001", HttpStatus.CONFLICT.value(), "Order is already canceled"),
 
+// ✅ a Command's structural check — the shared function, one shared code
+requireValid(quantity > 0) { "quantity must be positive" }
+
 // ❌ SVC-15
 throw IllegalArgumentException("invalid id")
 throw BusinessException(CommonErrorCode.UNEXPECTED, "...")
-require(id != null) { "id required" }
+require(quantity > 0) { "quantity must be positive" }   // stdlib require — IllegalArgumentException is not a client error
 // ❌ generic code shared across domains (hypothetical entry — the number is a placeholder)
 ENTITY_NOT_FOUND("COMMON-XXXX", HttpStatus.NOT_FOUND.value(), "Entity not found"),
 ```
@@ -58,19 +61,18 @@ Domain B exposes an entity-returning method, and domain A calls it instead of in
 ```kotlin
 // ✅ the member domain exposes the entity-returning method for cross-domain use
 @Service
+@Transactional
 class MemberService(private val memberRepository: MemberRepository) : Logger() {
     @Transactional(readOnly = true)
     fun getEntity(id: UUID): Member =
-        memberRepository.findByIdOrNull(id)?.takeUnless { it.isDeleted } ?: throw MemberNotFoundException(id)   // findById returns deleted rows too (REP-27)
+        memberRepository.findByIdOrNull(id)?.takeUnless { it.isDeleted } ?: throw MemberNotFoundException(id)   // findById is not filtered (REP-27)
 }
-// ✅ the order domain calls it instead of injecting MemberRepository
+// ✅ the order domain asks it instead of injecting MemberRepository, and stores only the id (REP-15)
 @Service
+@Transactional
 class OrderService(private val memberService: MemberService, private val orderRepository: OrderRepository) {
-    @Transactional
-    fun createOrder(command: CreateOrderCommand): OrderResult {
-        val member = memberService.getEntity(command.memberId)
-        return OrderResult.from(orderRepository.save(Order(member = member)))
-    }
+    fun createOrder(command: CreateOrderCommand): OrderResult =
+        orderRepository.save(Order(memberId = memberService.getEntity(command.memberId).id)).let(OrderResult::from)
 }
 ```
 
@@ -133,11 +135,15 @@ object OrderEnumMapper {
 ## SVC-30 · SVC-31 — Service vs Component
 
 ```kotlin
-// ✅ a domain use case is a *Service
+// ✅ a domain use case is a *Service — class-level @Transactional, readOnly on reads (TX-1)
 @Service
+@Transactional
 class OrderService(private val orderRepository: OrderRepository) : Logger() {
     @Transactional(readOnly = true) fun getEntity(orderId: UUID): Order = ...
 }
+// ✅ a flow with an outbound call is a *Facade — no @Transactional, no Repository (TX-3)
+@Component
+class OrderFacade(private val orderService: OrderService, private val paymentClient: PaymentClient) { ... }
 // ✅ drop "Template" → "AdvisoryLock" names the lock, not the bean acquiring it, so the suffix stays
 @Component
 class AdvisoryLockTemplate(private val entityManager: EntityManager) { fun acquireLocks(exclusiveKeys: List<String>, sharedKeys: List<String> = emptyList()) { ... } }
@@ -158,14 +164,14 @@ data class GroupCreatedEvent(val groupId: UUID, val ownerId: UUID, val name: Str
 
 // group/service/GroupService.kt — injects UserService for an answer; knows nothing about board or notification
 @Service
+@Transactional
 class GroupService(
     private val userService: UserService,
     private val groupRepository: GroupRepository,
     private val applicationEventPublisher: ApplicationEventPublisher,
 ) {
-    @Transactional
     fun createGroup(command: CreateGroupCommand): CreateGroupResult {
-        val group = groupRepository.save(command.toEntity(owner = userService.getActiveEntity(command.ownerId)))
+        val group = groupRepository.save(command.toEntity(ownerId = userService.getActiveEntity(command.ownerId).id))
         applicationEventPublisher.publishEvent(GroupCreatedEvent(groupId = group.id, ownerId = command.ownerId, name = group.name))
 
         return CreateGroupResult.from(group)
@@ -198,9 +204,8 @@ class NotificationEventListener(
 
 ```kotlin
 // ❌ GroupService injects BoardService and NotificationService and ignores what they return — telling, not asking
-@Transactional
 fun createGroup(command: CreateGroupCommand): CreateGroupResult {
-    val group = groupRepository.save(command.toEntity(owner = userService.getActiveEntity(command.ownerId)))
+    val group = groupRepository.save(command.toEntity(ownerId = userService.getActiveEntity(command.ownerId).id))
     boardService.createDefaultBoard(CreateDefaultBoardCommand(groupId = group.id))
     notificationService.notifyGroupCreated(NotifyGroupCreatedCommand(userId = command.ownerId, groupName = group.name))   // also runs before commit
 
@@ -242,17 +247,22 @@ interface UserClient {
 
 ```kotlin
 @Service
+@Transactional
 class OrderService(...) : Logger() {
     @Transactional(readOnly = true) fun getOrder(command: GetOrderCommand): OrderResult = ...
-    @Transactional fun createOrder(command: CreateOrderCommand): OrderResult = ...
-    fun quoteShippingFee(items: List<QuoteItem>): BigDecimal = ...   // No DB access — no annotation
-    fun placeOrder(command: PlaceOrderCommand): PlaceOrderResult = ... // Orchestrates DB steps + an external call — no annotation (transactions §3)
+    fun createOrder(command: CreateOrderCommand): OrderResult = ...                      // the class-level transaction
+    @Transactional(rollbackFor = [IOException::class])
+    fun importOrders(command: ImportOrdersCommand): ImportOrdersResult = ...             // a checked exception can leave it (TX-15)
 }
-// ❌ class-level (silently propagates the wrong attribute to newly added methods)
+// ❌ class-level readOnly — a write method that forgets its override loses its writes without an error (TX-17)
 @Service @Transactional(readOnly = true) class OrderService(...)
+// ❌ no class-level annotation — a method that forgets its own runs every repository call in a separate transaction
+@Service class OrderService(...)
+// ❌ a Service that calls out — the charge would run inside the transaction (TX-2)
+@Service @Transactional class OrderService(private val paymentClient: PaymentClient, ...)
 ```
 
-Boundary API — every boundary goes through `TransactionRunner`:
+Boundary API — a bean that is not a Service opens a boundary through `TransactionRunner`:
 
 ```kotlin
 // ❌ hand-rolled REQUIRES_NEW with no reason to exist
@@ -261,40 +271,48 @@ private val tx = TransactionTemplate(requireNotNull(transactionTemplate.transact
 // ❌ readOnly hidden in a field of the raw template, around a pure read (TX-5, TX-6)
 private val readTransactionTemplate = transactionTemplate.asReadOnly()
 val page = readTransactionTemplate.execute { ... }
-// ✅
-transactionRunner.inTx { ... }
+// ✅ an AFTER_COMMIT listener's write (TX-7)
+transactionRunner.inNewTx { notificationService.notifyGroupCreated(command) }
+// ❌ inTx inside a Service or a Facade — the Service method is the boundary (TX-1, TX-3)
 ```
 
-## TX-2 · TX-4 — Split and compensate
+## TX-3 · TX-4 — Facade and compensation
 
-Full skeleton of the transaction-splitting + explicit-compensation pattern:
+A flow with an external call between two DB steps, and its explicit compensation:
 
 ```kotlin
-// ❌ Bad — the external HTTP call is inside the transaction, so the row lock is held for its whole duration
+// ❌ Bad — the Service calls out: the HTTP call runs inside the transaction and holds the row lock for its whole duration
+@Service
 @Transactional
-fun placeOrder(command: CreateOrderCommand): PlaceOrderResult {
-    val order = orderService.createOrder(command)        // INSERT (lock held, before commit)
-    val payment = paymentClient.charge(order.id)         // HTTP — the payment system can't touch the same row
-    return PlaceOrderResult.from(order, payment)
+class OrderService(private val orderRepository: OrderRepository, private val paymentClient: PaymentClient) {
+    fun placeOrder(command: PlaceOrderCommand): PlaceOrderResult {
+        val order = orderRepository.save(command.toEntity())   // INSERT (lock held, before commit)
+        val payment = paymentClient.charge(order.id)           // HTTP — the payment system can't touch the same row
+
+        return PlaceOrderResult.from(order = order, payment = payment)
+    }
 }
 
-// ✅ Good — each DB step commits immediately under its own @Transactional; the external call is outside the transaction
-fun placeOrder(command: CreateOrderCommand): PlaceOrderResult {
-    val order = orderService.createOrder(command)        // commits as PAYMENT_PENDING under its own @Transactional (lock released)
-    val payment = try {
-        paymentClient.charge(orderId = order.id, idempotencyKey = order.id)   // outside the transaction; the key stops a retry or reconciliation from charging twice
-    } catch (e: PaymentDeclinedException) {              // definite failure — the ErrorDecoder mapped the remote 4xx (CTL-26)
-        safeDeleteOrder(order.id, command.memberId)      // explicit compensation
-        throw e
-    }                                                    // a timeout, reset or 5xx is an unknown outcome: it propagates, and the order stays PAYMENT_PENDING for reconciliation
-    val paidOrder = orderService.completePayment(CompletePaymentCommand(orderId = order.id, paymentId = payment.id))
+// ✅ Good — the Facade lists the flow; each Service call commits on its own and the external call runs between them
+@Component
+class OrderFacade(private val orderService: OrderService, private val paymentClient: PaymentClient) : Logger() {
+    fun placeOrder(command: PlaceOrderCommand): PlaceOrderResult {
+        val order = orderService.createOrder(command.toCreateOrderCommand())      // commits as PAYMENT_PENDING, lock released
+        val payment = try {
+            paymentClient.charge(orderId = order.id, idempotencyKey = order.id)   // outside any transaction; the key stops a retry or reconciliation from charging twice
+        } catch (e: PaymentDeclinedException) {              // definite failure — the ErrorDecoder mapped the remote 4xx (CTL-26)
+            safeDeleteOrder(orderId = order.id, memberId = command.memberId)      // explicit compensation
+            throw e
+        }                                                    // a timeout, reset or 5xx is an unknown outcome: it propagates, and the order stays PAYMENT_PENDING for reconciliation
 
-    return PlaceOrderResult.from(order = paidOrder, payment = payment)
-}
+        return orderService.completePayment(CompletePaymentCommand(orderId = order.id, paymentId = payment.id))
+            .let { PlaceOrderResult.from(order = it, payment = payment) }
+    }
 
-private fun safeDeleteOrder(orderId: UUID, memberId: UUID) {
-    runCatching { orderService.deleteOrder(DeleteOrderCommand(orderId = orderId, memberId = memberId)) }
-        .onFailure { e -> logger.warn(e) { "Failed to compensate: orderId=$orderId" } }
+    private fun safeDeleteOrder(orderId: UUID, memberId: UUID) {
+        runCatching { orderService.deleteOrder(DeleteOrderCommand(orderId = orderId, memberId = memberId)) }
+            .onFailure { e -> logger.warn(e) { "Failed to compensate: orderId=$orderId" } }
+    }
 }
 ```
 
@@ -303,7 +321,7 @@ private fun safeDeleteOrder(orderId: UUID, memberId: UUID) {
 *If the project uses PostgreSQL advisory locks / Redis.*
 
 ```kotlin
-// ✅ startup seeding — mutual exclusion is needed all the way to the commit, so inTx wraps only the lock and the DB work (TX-9)
+// ✅ startup seeding in an initializer bean (not a Service) — mutual exclusion is needed all the way to the commit, so inTx wraps only the lock and the DB work (TX-9)
 @EventListener(ApplicationReadyEvent::class)
 fun init() {
     transactionRunner.inTx {
@@ -327,7 +345,7 @@ fun runAwaitingLock(key: String, ...) {
 Narrow the boundary to lock + DB work only:
 
 ```kotlin
-// ❌ work that must happen after the commit is dragged inside the transaction
+// ❌ work that must happen after the commit is dragged inside the transaction — and @Transactional sits on a bean that is not a Service (TX-1)
 @EventListener(ApplicationReadyEvent::class)
 @Transactional
 fun initialize() {

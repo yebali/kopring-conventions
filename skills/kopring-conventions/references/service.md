@@ -15,12 +15,12 @@
 | SVC-7 | | Entity types are never Command/Result field types; an entity appears only as a `from(entity)` parameter | [§3](#3-command-and-result) |
 | SVC-8 | | Conversions: `request.toCommand(…)`, `command.toEntity()`, `Result.from(entity)` | [§3](#3-command-and-result) |
 | SVC-9 | | Validation prefixes: `check*` throws, `verify*` returns a result, `is*`/`can*`/`has*` return Boolean; no `validate*` | [§4](#4-validation) |
-| SVC-10 | | Structural validation in `Command.init {}`, business validation in a private `check*` | [§4](#4-validation) |
+| SVC-10 | | Structural validation in `Command.init {}` through `requireValid`, business validation in a private `check*` | [§4](#4-validation) |
 | SVC-11 | | A not-found check over requested ids reports every missing id | [§4](#4-validation) |
 | SVC-12 | | A `resolve*` that crosses a service boundary carries a KDoc naming the callee and is never folded into a chain | [§4](#4-validation) |
 | SVC-13 | ⚠ | Exception messages are English | [§5](#5-exceptions-and-failure-forms) |
-| SVC-14 | | A Service throws only its own domain's named exceptions with a domain `ErrorCode` | [§5](#5-exceptions-and-failure-forms) |
-| SVC-15 | | Failure forms follow the table: no stdlib assert or generic exception in Service/Command; `requireNotNull` only for internal invariants | [§5](#5-exceptions-and-failure-forms) |
+| SVC-14 | | A Service throws only its own domain's named exceptions with a domain `ErrorCode` (a Command's structural check: SVC-15) | [§5](#5-exceptions-and-failure-forms) |
+| SVC-15 | | Failure forms follow the table: `requireValid` for a Command's structural check, a named domain exception for a business failure, `requireNotNull` only for internal invariants; no stdlib assert or generic exception in Service/Command | [§5](#5-exceptions-and-failure-forms) |
 | SVC-16 | | A 4xx is logged without its stack trace, message built inside the lambda; a 5xx keeps the trace | [§5](#5-exceptions-and-failure-forms) |
 | SVC-17 | | Never inject another domain's Repository; call its Service (listed exceptions) | [§6](#6-cross-domain-access) |
 | SVC-18 | | A qualified entity-returning variant exists only for a different fetch graph or an extra check, and its name says which | [§6](#6-cross-domain-access) |
@@ -34,8 +34,8 @@
 | SVC-26 | | A handler of redeliverable messages is idempotent | [§8](#8-writes-duplicates-and-idempotency) |
 | SVC-27 | | Enum layers follow the boundaries the enum crosses; never merge the entity enum with the service enum | [§9](#9-enum-layer-separation) |
 | SVC-28 | | Enum mappers are `{Domain}EnumMapper`/`{Protocol}EnumMapper` with an `else`-less `when` and `to{Layer}{Type}` names | [§9.2](#92-two-mappers) |
-| SVC-29 | | An unknown external code is skipped with a WARN log, never stored or thrown | [§9.3](#93-unknown-external-values) |
-| SVC-30 | | `@Service` only for a transactional domain use-case entry point; other beans are `@Component` with a role suffix | [§10](#10-service-vs-component) |
+| SVC-29 | | An unknown external code is skipped with a WARN log, never stored or thrown (an `@Enumerated` column: REP-39) | [§9.3](#93-unknown-external-values) |
+| SVC-30 | | `@Service` only for a transactional domain use-case entry point; a flow with an outbound call is a `*Facade`; other beans are `@Component` with a role suffix | [§10](#10-service-vs-component) |
 | SVC-31 | | Drop a bean's suffix and keep it only if what remains is not a usable name | [§10](#10-service-vs-component) |
 | SVC-33 | | An event carries ids plus the data its listeners need; never an entity, an `@Embeddable`, an entity-inner enum or the authenticated principal object | [§11](#11-spring-events) |
 | SVC-34 | | An `AFTER_COMMIT`/`BEFORE_COMMIT` `@TransactionalEventListener` sets `fallbackExecution = true`; an `AFTER_ROLLBACK`/`AFTER_COMPLETION` one never does | [§11](#11-spring-events) |
@@ -46,6 +46,8 @@
 | SVC-40 | | A listener that must commit with the publisher is a synchronous `@EventListener`; one that may run after commit is `AFTER_COMMIT` and writes through `inNewTx` | [§11](#11-spring-events) |
 | SVC-41 | | The publishing domain owns the event class; the affected domain owns a thin listener that delegates to its own Service | [§11](#11-spring-events) |
 | SVC-42 | ⚠ | A message whose loss leaves another deployable inconsistent goes through a transactional outbox or a named reconciliation job; any other publish is marked best-effort | [§11](#11-spring-events) |
+| SVC-44 | ⚠ | The scope key of a row-scoped operation comes from the authenticated principal, never from a field the client fills; a row outside the caller's scope is the domain's 404 | [§4](#4-validation) |
+| SVC-45 | | A Command checks in `init {}`, through `requireValid`, the length of every `String` bound for a column and the size of every collection | [§4](#4-validation) |
 
 Service code also follows the cross-cutting rules: logging ([STY-1](code-style.md#2-baseline), [logging](code-style.md#12-logging)), single-use intermediates ([STY-19](code-style.md#6-single-use-intermediates)) and the plain option ([STY-27](code-style.md#10-prefer-the-plain-option)). Transaction boundaries, external calls and locks are TX rules in [transactions.md](transactions.md).
 
@@ -146,11 +148,28 @@ data class CreateOrderCommand(val shippingAddress: Address, val status: OrderSta
 
 Forbidden: the `validate*` prefix (its meaning overlaps `check*` and `verify*`); a `check*` that returns `Boolean`; a `verify*` that returns `Unit` and throws (rename it `check*`). Example: [SVC-9](examples/service.md#svc-9--validation-method-naming).
 
-**SVC-10** — Structural validation (required, length, format, empty collection) lives in `Command.init {}`. Business validation (entity existence, permissions, state) lives in a private Service `check*()`. Validation that returns a result to the caller (token validity) is a public Service `verify*()`.
+**SVC-10** — Structural validation (required, length, format, empty collection) lives in `Command.init {}`, written with the shared `requireValid(condition) { "message" }` ([SVC-15](#5-exceptions-and-failure-forms)). Business validation (entity existence, permissions, state) lives in a private Service `check*()` and throws a named domain exception. Validation that returns a result to the caller (token validity) is a public Service `verify*()`.
 
 **SVC-11** — A check of "which requested ids were not found" collects **every** missing id with `requested - found.map { it.id }.toSet()` and throws the domain's named exception ([SVC-14](#5-exceptions-and-failure-forms)) with all of them. It never throws on the first miss, because the client must learn every bad id in one round trip. The idiom is the rule; it is not extracted into a shared util, because each domain throws a different exception. Example: [SVC-10 · SVC-11](examples/service.md#svc-10--svc-11--structural-checks-and-every-missing-id).
 
 **SVC-12** — The `resolve*` prefix says nothing about cost: it spans pure in-memory computation (`resolveThumbnail`) and remote round trips (`MemberReader.resolveMembers` calls another service per page). A `resolve*` that crosses a service boundary therefore carries a one-line KDoc naming the callee — the summary trigger of [STY-16](code-style.md#5-comments-and-kdoc) — not a line comment. Its call site never folds it into a `.let {}` chain, so the remote call stays visible ([STY-19](code-style.md#6-single-use-intermediates)).
+
+**SVC-44** — A row-scoped operation reads or changes only the rows inside the caller's scope: the caller's own rows, or those of the group or tenant the caller belongs to. The scope key — the owner, group or tenant id — comes from the authenticated principal (`request.toCommand(authUser.id)`, [CTL-1](controller.md#2-endpoint-signatures)), never from a body field, a query parameter or a path segment, which the client fills with any id it likes. The Service applies the key where the row is read: a list or page read carries it as a filter of the `*Query`, and a single read or a write checks it in a private `check*`. A row outside the scope raises the domain's `*NotFoundException` — the answer for a row that does not exist, so the response never confirms that the id is real ([COV-1](test-coverage.md#2-controller-coverage)). An owner id the client does send is legitimate only where the caller may act on other people's rows — an `/api/v1/admin` endpoint ([CTL-20](controller.md#8-restful-api-design)) or a permission-gated one — and there it is an ordinary filter, with the permission as the gate.
+
+❌ `@RequestParam memberId: UUID` → `PageOrderCommand(memberId = memberId, …)` (any member pages any member's orders) — ✅ `authUser: AuthUser` → `PageOrderCommand(memberId = authUser.id, …)`
+
+**SVC-45** — Every `String` a Command carries to a column is checked in `init {}` against that column's length, and every collection against a maximum size, so an oversized input is a 400 (`requireValid`, [SVC-15](#5-exceptions-and-failure-forms)) instead of a `DataIntegrityViolationException` (500) or a query with tens of thousands of bind parameters. The length is the entity's constant, the one its `@Column(length = …)` uses ([REP-14](repository.md#6-entity-mapping)), so the check and the column cannot drift. A `text` column and an id list still get a limit — the largest value the feature means to accept, a `companion object` constant of the Command. Which service enforces a limit is [CTL-15](controller.md#6-validation). A machine-sent wire DTO's display strings are cut to the length instead ([CTL-29](controller.md#14-shared-module-wire-dto-mapping)); a user's request is rejected, never cut.
+
+```kotlin
+data class CreateOrderCommand(val memo: String?, val items: List<Item>, val memberId: UUID) {
+    init {
+        requireValid(memo == null || memo.length <= Order.MEMO_LENGTH) { "memo is longer than ${Order.MEMO_LENGTH} characters" }
+        requireValid(items.size in 1..MAX_ITEMS) { "items must hold 1 to $MAX_ITEMS entries" }
+    }
+
+    companion object { const val MAX_ITEMS = 100 }
+}
+```
 
 ---
 
@@ -158,7 +177,7 @@ Forbidden: the `validate*` prefix (its meaning overlaps `check*` and `verify*`);
 
 **SVC-13** — A thrown exception's `message` is English; comments stay Korean ([code-style §5](code-style.md#5-comments-and-kdoc)). ❌ `throw OrderNotFoundException("<Korean text>")`
 
-**SVC-14** — A Service throws only its own domain's exceptions: the order Service never throws `PaymentNotFoundException`, because a cross-domain exception reference is a layer-boundary violation. Every throw uses a named domain subclass (`OrderNotFoundException : EntityNotFoundException`) with a domain-specific `ErrorCode`; generic shared codes (`CommonErrorCode`) and an `ENTITY_NOT_FOUND` code are forbidden.
+**SVC-14** — A Service throws only its own domain's exceptions: the order Service never throws `PaymentNotFoundException`, because a cross-domain exception reference is a layer-boundary violation. Every throw of a business failure uses a named domain subclass (`OrderNotFoundException : EntityNotFoundException`) with a domain-specific `ErrorCode`; generic shared codes (`CommonErrorCode`) and an `ENTITY_NOT_FOUND` code are forbidden there. The one shared code the Service layer raises is `CommonErrorCode.INVALID_PARAMETER`, through `requireValid` in a Command's structural check (SVC-15).
 
 The hierarchy lives in a shared module: `BusinessException : RuntimeException` (the base, carrying an `ErrorCode`) → `EntityNotFoundException` (resource missing) or `InvalidValueException` (bad input) → the domain subclass. Each module has its own `ErrorCode` enum implementing the shared `ErrorCode` interface, plus a `CommonErrorCode` for shared concepts raised by the shared global exception handler ([STY-57](code-style.md#20-errorcode-numbering)); each service adds a thin `@RestControllerAdvice` subclass of that handler. ErrorCode numbering: [STY-55](code-style.md#20-errorcode-numbering).
 
@@ -175,10 +194,19 @@ open class BusinessException(val errorCode: ErrorCode, override val message: Str
 
 | Failure | Form |
 |---|---|
-| Input from a caller (client, Command field, request) is missing or invalid | Named domain exception (SVC-14) |
+| A Command's structural check fails — a required value, a length, a range, a format ([SVC-10](#4-validation), [SVC-45](#4-validation)) | `requireValid(condition) { "<what is wrong>" }` — the shared `InvalidValueException` with `CommonErrorCode.INVALID_PARAMETER` (400) |
+| A business rule fails — existence, state, permission, a duplicate | Named domain exception (SVC-14) |
 | An internal invariant no caller input can reach (a loaded relation that must exist) | `requireNotNull(x) { "<context>" }` |
 | Configuration or wiring validated while the context boots (a cookie generator's `init`, deriving a public key from configured key material) | `check`/`error` allowed — the failure stops startup, so no `ErrorCode` or HTTP status reaches a client |
-| Anything else in a Service or Command | Forbidden: `require`, `check`, `checkNotNull`, `error`, throwing `IllegalArgumentException`/`IllegalStateException`/`UnsupportedOperationException`, and constructing `BusinessException`/`InvalidValueException` directly |
+| Anything else in a Service or Command | Forbidden: the stdlib `require`, `check`, `checkNotNull`, `error`, throwing `IllegalArgumentException`/`IllegalStateException`/`UnsupportedOperationException`, and constructing `BusinessException`/`InvalidValueException` directly |
+
+`requireValid` is one shared function and not the stdlib `require`: `require` throws `IllegalArgumentException`, and answering that type with a 400 would also turn a library's or a bug's `IllegalArgumentException` into a client error. A client reads which check failed from the response's `message`; a failure a client must branch on is a business failure with a code of its own. The default shape; a project may already have its own equivalent — use that:
+
+```kotlin
+inline fun requireValid(value: Boolean, lazyMessage: () -> String) {
+    if (!value) throw InvalidValueException(errorCode = CommonErrorCode.INVALID_PARAMETER, message = lazyMessage())
+}
+```
 
 A utility class may `require` its programmer preconditions.
 
@@ -201,7 +229,7 @@ A *deployable* is one application that is built, deployed and run on its own (`a
 | Deployable ↔ deployable | The caller waits on the outcome — a read, or a command whose result the caller returns or whose failure must reach the caller | HTTP client `*Client` ([CTL-25](controller.md#11-feign-clients)) |
 | Deployable ↔ deployable | The caller tells the other deployable to act and neither its response nor its own commit waits for it | `*Message` over the message broker ([STY-52](code-style.md#18-transport-dto-suffix)) |
 
-Between deployables the test in one line: **would the caller's own result be wrong, or have to roll back, if the other side has not finished yet?** Yes → HTTP: a guard check, a lookup, a copy, move or delete whose result the end user receives, an upload that returns ids, an all-or-nothing sync. No → a broker message the other deployable consumes idempotently ([SVC-26](#8-writes-duplicates-and-idempotency)) and redelivers on failure ([SVC-37](#12-message-consumers)): best-effort cleanup, a computation whose result comes back later, a follow-up resource created after the caller's own commit. A state-changing HTTP call whose result the caller discards, or whose failure it swallows, is telling in HTTP clothes — it fails when the other side is down and leaves the two sides inconsistent, so send it as a message. A third-party system outside the organization (a payment gateway, a mail provider) is not a deployable of the system: call its API as it requires, under [TX-2](transactions.md#3-external-calls-and-compensation).
+Between deployables the test in one line: **would the caller's own result be wrong, or have to roll back, if the other side has not finished yet?** Yes → HTTP: a guard check, a lookup, a copy, move or delete whose result the end user receives, an upload that returns ids, an all-or-nothing sync. No → a broker message the other deployable consumes idempotently ([SVC-26](#8-writes-duplicates-and-idempotency)) and redelivers on failure ([SVC-37](#12-message-consumers)): best-effort cleanup, a computation whose result comes back later, a follow-up resource created after the caller's own commit. A state-changing HTTP call whose result the caller discards, or whose failure it swallows, is telling in HTTP clothes — it fails when the other side is down and leaves the two sides inconsistent, so send it as a message. A third-party system outside the organization (a payment gateway, a mail provider) is not a deployable of the system: call its API as it requires. Every such call — to another deployable or a third party — is made from a Facade, a listener or the controller gate, never from a Service ([TX-2](transactions.md#3-external-calls-and-compensation)).
 
 **SVC-39** — Between domains of one deployable, take the first row that fits:
 
@@ -211,7 +239,7 @@ Between deployables the test in one line: **would the caller's own result be wro
 | 2 | A Service's own logic uses another domain's answer — a lookup, a precondition check, a generated id | Inject that domain's Service and call it (never its Repository, SVC-17) |
 | 3 | A state change in one domain (create, update, delete, transition) affects another domain — its data, or a side effect such as a notification, an external call or a cache eviction — and the changing domain does not use the outcome | The changing domain publishes an `*Event`; the affected domain handles it in its own listener ([§11](#11-spring-events)). The publisher never injects the affected domain's Service for this |
 
-The test in one line: **asking** another domain → inject; **telling** it → event; **decorating** an output → adapter. The caller's outcome decides which one a call is, not the return type. A call made *after* the Service changed its own state, whose result the Service discards, is telling (row 3). A call made *before* the Service's own writes, whose exception stops the Service — a precondition check, a one-time-use gate — is asking (row 2) even when it returns `Unit`; an event there would move the gate after the writes. An effect the request promised and that must stay out of the transaction, such as deleting stored files after commit, is the direct post-commit call of [TX-3](transactions.md#3-external-calls-and-compensation) option 3, not a row 3 violation. Following these rows keeps most bean cycles from forming ([SVC-20](#63-breaking-bean-cycles-without-lazy)).
+The test in one line: **asking** another domain → inject; **telling** it → event; **decorating** an output → adapter. The caller's outcome decides which one a call is, not the return type. A call made *after* the Service changed its own state, whose result the Service discards, is telling (row 3). A call made *before* the Service's own writes, whose exception stops the Service — a precondition check, a one-time-use gate — is asking (row 2) even when it returns `Unit`; an event there would move the gate after the writes. An effect the request promised and that must stay out of the transaction, such as deleting stored files after commit, is a step of a Facade ([TX-3](transactions.md#3-external-calls-and-compensation)), not a row 3 violation. Following these rows keeps most bean cycles from forming ([SVC-20](#63-breaking-bean-cycles-without-lazy)).
 
 ```kotlin
 // ✅ row 2 — creating a group needs the owner's answer: is the user active?
@@ -233,7 +261,7 @@ Example: [SVC-38 – SVC-41](examples/service.md#svc-38--svc-39--svc-40--svc-41-
 
 **SVC-17** — A Service never injects another domain's Repository; it calls that domain's Service. The only classes that may inject other domains' repositories are listed in [§6.2](#62-repository-access-exceptions).
 
-**SVC-18** — A qualified entity-returning variant exists for two things only: a different fetch graph (`getEntityWithItems`, `getEntityWithPayments`) or an encapsulated extra check (`getActiveEntity`, which also drops the soft-deleted row a derived or own-PK read returns — [REP-27](repository.md#8-soft-delete)). The method name says which; a KDoc does not explain the fetch graph or the check ([STY-16](code-style.md#5-comments-and-kdoc)).
+**SVC-18** — A qualified entity-returning variant exists for two things only: a different fetch graph (`getEntityWithItems`, `getEntityWithPayments`) or an encapsulated extra check (`getActiveEntity`, which also drops the soft-deleted row an own-PK read returns — [REP-27](repository.md#8-soft-delete)). The method name says which; a KDoc does not explain the fetch graph or the check ([STY-16](code-style.md#5-comments-and-kdoc)).
 
 Example: [SVC-2 · SVC-17](examples/service.md#svc-2--svc-17--cross-domain-entity-returning-method).
 
@@ -317,7 +345,7 @@ val created = translateUniqueViolation(
     constraintName = OrderItem.UNIQUE_ORDER_PRODUCT,
     conflict = { OrderItemAlreadyAddedException(command.items.map { it.productId }) },
 ) {
-    orderItemRepository.saveAllAndFlush(command.items.map { OrderItem(order = order, product = productsById.getValue(it.productId), quantity = it.quantity, createdBy = command.memberId) })
+    orderItemRepository.saveAllAndFlush(command.items.map { OrderItem(order = order, productId = it.productId, quantity = it.quantity, createdBy = command.memberId) })
 }
 ```
 
@@ -365,7 +393,7 @@ Example: [SVC-27 · SVC-28](examples/service.md#svc-27--svc-28--enummapper).
 
 ### 9.3 Unknown external values
 
-**SVC-29** — When an external system or the DB hands over a code the enum does not know, skip that item and log WARN (`Unknown <type> skipped: code=…`). Never store a guessed value and never fail the whole batch. An enum does not add an `UNKNOWN` constant for this.
+**SVC-29** — When an external system hands over a code the enum does not know — in a payload, or as a raw code read back from the database (a JSONB value, a native-query column) — skip that item and log WARN (`Unknown <type> skipped: code=…`). Never store a guessed value and never fail the whole batch. An enum does not add an `UNKNOWN` constant for this. An `@Enumerated` column never reaches this rule: Hibernate fails while loading a row whose value no constant matches, which [REP-39](repository.md#11-migrations) prevents.
 
 ---
 
@@ -375,7 +403,8 @@ Example: [SVC-27 · SVC-28](examples/service.md#svc-27--svc-28--enummapper).
 
 | Category | Annotation | Suffix | Test |
 |---|---|---|---|
-| Domain use case (transaction boundary) | `@Service` | `*Service` | Entry point for a transactional use case on a domain entity |
+| Domain use case (transaction boundary) | `@Service` with class-level `@Transactional` ([TX-1](transactions.md#2-transaction-boundaries)) | `*Service` | Entry point for a transactional use case on a domain entity |
+| Flow with an outbound call | `@Component` | `*Facade` | Sequences Service calls and outbound calls outside any transaction ([TX-3](transactions.md#3-external-calls-and-compensation)); injects no Repository and carries no `@Transactional` |
 | Spring lifecycle and event glue | `@Component` | `*Listener`/`*Handler`/`*Scheduler`/`*Filter`/`*Interceptor`/`*Initializer`/`*Verifier`/`*Runner` | Receives a framework callback (event, packet, broker message, schedule, boot, `preHandle`). A message-broker subscriber is a `*Listener` too, never `*Consumer`. `*Runner` here means a bean driven by a callback; a wrapper that runs something on request (`TransactionRunner`) belongs to the row below |
 | External system or library wrapper | `@Component` | The role's own noun: `*Publisher`, `*Broadcaster`, `*Notifier`, `*Store`, `*Lookup`, `*Recorder`, `*Registry`, `*Registrar`, `*Issuer`, `*Reader`, `*Runner`, `*Throttle`, `*Auditor`; `*Template`/`*Executor` only when dropping the suffix leaves no usable name (SVC-31) | Wraps a PostgreSQL feature, Redis, a message broker, an OS API, a thread pool or an external library, or fronts a remote read another service answers (`MemberReader`) |
 | External-service HTTP/SSE client | `@Component` / `@FeignClient` | `*Client` | Outbound client calling another service's HTTP or SSE |

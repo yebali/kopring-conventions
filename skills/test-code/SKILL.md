@@ -3,9 +3,9 @@ name: test-code
 description: "Use when the user wants tests written for the code changed on the current branch — MockMvc tests for new or modified @RestController endpoints and Service tests for new or modified Service methods. Triggers on \"write tests for my changes\", \"generate integration tests\", \"test the changed code\", \"add MockMvc tests\", \"cover the diff\", \"test code\". Scoped to the change, not the whole module. NOT for auditing existing coverage across the codebase (use check-conventions)."
 ---
 
-# Test Code — MockMvc Integration Tests for the Current Diff
+# Test Code — Tests for the Current Diff
 
-Write or modify **end-to-end MockMvc integration tests for the code changed in the current diff** — scoped to the change, not the whole module. `<kopring-conventions>` below means that skill's directory.
+Write or modify **the controller, Service, Facade and repository tests for the code changed in the current diff** — scoped to the change, not the whole module. `<kopring-conventions>` below means that skill's directory.
 
 ## Conventions — defer to `kopring-conventions`
 
@@ -18,10 +18,10 @@ Read [testing.md](../kopring-conventions/references/testing.md) (`TST-N`, how a 
 
 ## Steps
 
-1. **Scope from the branch**: `bash <kopring-conventions>/scripts/changed-files.sh` prints the changed paths (committed since the base ∪ working tree ∪ untracked) on stdout and `base: <branch>` on stderr — `git diff` and `git status` alone miss the commits already on the branch. Identify every changed or newly added Controller endpoint and Service method, and report the detected base.
+1. **Scope from the branch**: `bash <kopring-conventions>/scripts/changed-files.sh` prints the changed paths (committed since the base ∪ working tree ∪ untracked) on stdout and `base: <branch>` on stderr — `git diff` and `git status` alone miss the commits already on the branch. Identify every changed or newly added Controller endpoint, Service or Facade method and custom repository query, and report the detected base.
 2. **Source cross-reference** (COV-1 / COV-3): for each changed Controller or Service, list its public endpoints or methods, cross-reference the existing `*Test.kt`, and target the untested ones first — do not add redundant coverage. At 6+ changed classes, fan this out with one `Explore` subagent per class.
 3. **Write tests** per the TST rules:
-   - **Controller tests** call the real endpoint through `mockMvc` and verify the **HTTP contract** (status, response schema, error code). Apply the full COV-1 parameter-variation matrix to each changed endpoint.
-   - **Service tests** (COV-3) cover each changed public Service method — including one reached only from a listener or scheduler — with a success test asserting a business effect (a pure-mapping create is exempt) and one failure test per domain exception it throws. State effects are asserted here, not in the controller test. When fanning out test *writing*, partition per **module**, not per class — concurrent agents in one module conflict on the module's shared test base class (TST-2 / TST-3). Each writing unit's prompt carries the TST/COV rule IDs and forbids `git commit`, Gradle runs and files outside its list.
+   - **Controller tests** extend `WebMvcTestSupport` (TST-8): they call the real endpoint through `mockMvc` against the mocked Service and verify the **HTTP contract** (status, response schema, error code) and the Command the Service received. Apply the full COV-1 parameter-variation matrix to each changed endpoint.
+   - **Service tests** (COV-3) cover each changed public Service method — including one reached only from a listener or scheduler — with a success test asserting its effect (for a pure-mapping create, one re-read of the stored row), one failure test per domain exception it throws, and an out-of-scope case for a row-scoped method. A changed Facade gets its COV-5 cases, and a changed `Custom*RepositoryImpl` query its repository test in `DataJpaTestSupport`. State effects are asserted here, not in the controller test. When fanning out test *writing*, partition per **module**, not per class — concurrent agents in one module conflict on the module's shared test base class (TST-2 / TST-3). Each writing unit's prompt carries the TST/COV rule IDs and forbids `git commit`, Gradle runs and files outside its list.
 4. **Run and verify**: batch each module's test classes into ONE invocation with repeated `--tests` flags — `./gradlew :<module>:test --tests "ATest" --tests "BTest"` — instead of one Gradle run per class (saves repeated JVM and Spring-context warm-ups). Confirm all green. A new test that fails because production behaves differently from the rule is reported, not "fixed" by weakening its assertion.
 5. **Summarize** briefly: tests written per target, the COV rule each satisfies, and the run result.

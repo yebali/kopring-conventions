@@ -1,22 +1,22 @@
 # Repository — Worked Examples
 
-Rule text, conditions and exceptions live in [repository.md](../repository.md); this file only illustrates them.
+Rule text, conditions and exceptions live in [repository.md](../repository.md); this file only illustrates them. The KDoc summaries of [STY-16](../code-style.md#5-comments-and-kdoc) are left out so the rule shown stays in focus; production code carries them.
 
 ## REP-1 · REP-2 — Query construction
 
 ```kotlin
-// ✅ derived query — a single one-segment field
-interface OrderItemRepository : JpaRepository<OrderItem, UUID>, CustomOrderItemRepository {
-    fun findAllByOrder(order: Order): List<OrderItem>
+// ✅ derived query — a single-row read on one one-segment field
+interface ProductRepository : JpaRepository<Product, UUID>, CustomProductRepository {
+    fun findByCode(code: String): Product?
 }
 
 // ✅ QueryDSL Custom Repository with a subquery — the only way to write bulk DML; named bulkDeleteBy* (REP-8)
 class CustomOrderItemRepositoryImpl(
     private val queryFactory: JPAQueryFactory,
 ) : CustomOrderItemRepository {
-    override fun bulkDeleteByMember(member: Member) {
+    override fun bulkDeleteByMemberId(memberId: UUID) {
         val orderIdsOfMember = JPAExpressions
-            .select(order.id).from(order).where(order.member.id.eq(member.id))
+            .select(order.id).from(order).where(order.memberId.eq(memberId))
         queryFactory.delete(orderItem)
             .where(orderItem.order.id.`in`(orderIdsOfMember))
             .execute()
@@ -28,9 +28,9 @@ class CustomOrderItemRepositoryImpl(
 @Query(value = "DELETE FROM order_item WHERE order_id = :orderId", nativeQuery = true)
 fun deleteAllByOrderId(@Param("orderId") orderId: UUID)
 
-@Query("SELECT oi FROM OrderItem oi WHERE oi.order = :order AND oi.order.deletedAt IS NULL")
+@Query("SELECT oi FROM OrderItem oi WHERE oi.order = :order")
 fun findAllByOrder(order: Order): List<OrderItem>
-// → a QueryDSL method on CustomOrderItemRepository (two conditions are not a derived query, REP-2)
+// → listByQuery(ListOrderItemQuery(order = order)) on CustomOrderItemRepository — a list read is never derived (REP-44)
 ```
 
 ## REP-5 — `by()` predicate extraction
@@ -43,14 +43,14 @@ override fun pageByQuery(query: PageOrderQuery): Page<Order> {
 }
 
 private fun by(query: PageOrderQuery): BooleanBuilder =
-    BooleanBuilder(order.deletedAt.isNull)
-        .and(order.member.id.eq(query.memberId))
+    BooleanBuilder(order.memberId.eq(query.memberId))
         .and(query.startOrderedAt?.let { order.orderedAt.goe(it) })
+        .and(query.endOrderedAt?.let { order.orderedAt.lt(it) })                 // half-open range (REP-40)
         .and(query.keyword?.takeIf { it.isNotBlank() }?.let(::buildKeywordPredicate))
 
 // ❌ BooleanBuilder assembled inline, imperatively, inside pageByQuery()
 override fun pageByQuery(query: PageOrderQuery): Page<Order> {
-    val where = BooleanBuilder().and(order.deletedAt.isNull)
+    val where = BooleanBuilder(order.memberId.eq(query.memberId))
     query.startOrderedAt?.let { where.and(order.orderedAt.goe(it)) }
     // ...
 }
@@ -64,7 +64,7 @@ override fun pageByQuery(query: PageOrderQuery): Page<Order> {
 // ✅ default kapt singleton imported directly
 import com.example.shop.order.entity.QOrder.order
 
-queryFactory.selectFrom(order).where(order.id.eq(id).and(order.deletedAt.isNull)).fetchOne()
+queryFactory.selectFrom(order).where(order.number.eq(number)).fetchOne()
 
 // ❌ local underscore alias field
 companion object { private val order_ = QOrder("order_") }
@@ -86,8 +86,8 @@ import com.example.shop.x.entity.`QKeyword$`.`keyword$` as keyword
 override fun pageByQuery(query: PageOrderQuery): Page<Order> {
     val content = queryFactory
         .selectFrom(order)
-        .innerJoin(order.member, member).fetchJoin()
-        .leftJoin(order.payment, payment).fetchJoin()
+        .leftJoin(order.shipment, shipment).fetchJoin()                 // same-domain association (REP-15)
+        .innerJoin(member).on(member.id.eq(order.memberId))             // another domain: joined on the id for the filter, never fetched
         .where(by(query))
         .withPagination(query.pageable, *orderTransformer.transform(sort = query.pageable.sort, sortable = PageOrderQuery.SORTABLE), order.id.asc())
         .fetch()
@@ -95,7 +95,7 @@ override fun pageByQuery(query: PageOrderQuery): Page<Order> {
     return PageableExecutionUtils.getPage(content, query.pageable) {
         queryFactory.select(order.count())
             .from(order)
-            .innerJoin(order.member, member)
+            .innerJoin(member).on(member.id.eq(order.memberId))
             .where(by(query))
             .fetchOne() ?: 0L
     }
@@ -113,9 +113,9 @@ override fun pageByQuery(query: PageOrderQuery): Page<Order> {
 ```kotlin
 // ✅ conditions encapsulated in a Query object, one existsByQuery method
 data class ExistsOrderItemQuery(
-    val product: Product,
+    val productId: UUID,
     val orderPaid: Boolean? = null,      // null = not filtered
-    val orderDeleted: Boolean? = null,
+    val status: OrderItemStatus? = null,
 )
 
 interface CustomOrderItemRepository {
@@ -124,12 +124,12 @@ interface CustomOrderItemRepository {
 
 // call site — named arguments carry the intent
 orderItemRepository.existsByQuery(
-    ExistsOrderItemQuery(product = product, orderPaid = true, orderDeleted = false),
+    ExistsOrderItemQuery(productId = productId, orderPaid = true),
 )
 
 // ❌ conditions baked into method names — a new condition forks yet another method
-fun existsByProductIdAndOrderDeletedAtIsNullAndOrderPaidAtIsNotNull(...)
-fun existsByProductIdInAndOrderDeletedAtIsNullAndOrderPaidAtIsNotNull(...)
+fun existsByProductIdAndOrderPaidAtIsNotNull(...)
+fun existsByProductIdAndOrderPaidAtIsNotNullAndStatus(...)
 ```
 
 ```kotlin
@@ -137,7 +137,7 @@ fun existsByProductIdInAndOrderDeletedAtIsNullAndOrderPaidAtIsNotNull(...)
 //    page has its own axis (period · explicit id list) and its own by()
 data class OrderFilter(val status: OrderStatus? = null, val paymentMethod: PaymentMethod? = null, val shipped: Boolean? = null)
 data class ListOrderQuery(val memberIds: List<UUID>? = null, val filter: OrderFilter = OrderFilter())
-data class PageOrderQuery(val startOrderedAt: ZonedDateTime? = null, val endOrderedAt: ZonedDateTime? = null, val orderIds: List<UUID>? = null, val pageable: Pageable) {
+data class PageOrderQuery(val startOrderedAt: Instant? = null, val endOrderedAt: Instant? = null, val orderIds: List<UUID>? = null, val pageable: Pageable) {   // [start, end) (REP-40)
     companion object { val SORTABLE = setOf("orderedAt", "status") }   // the only properties ?sort= may name (REP-38)
 }
 
@@ -147,10 +147,10 @@ interface CustomOrderRepository {
     fun pageByQuery(query: PageOrderQuery): Page<Order>       // own axis, own by(PageOrderQuery)
 }
 
-// ❌ condition-only variants fragmenting into many methods
+// ❌ a derived list read, and a second one beside it for the next condition
 fun findAllByOrderId(orderId: UUID): List<OrderItem>
 fun findAllByOrderIdAndStatus(orderId: UUID, status: OrderItemStatus): List<OrderItem>
-// → fun listByQuery(query: ListOrderItemQuery): List<OrderItem>   // ListOrderItemQuery(order, status? = null)
+// → fun listByQuery(query: ListOrderItemQuery): List<OrderItem>   // from the first list read on (REP-44); ListOrderItemQuery(order, status? = null)
 ```
 
 ```kotlin
@@ -271,29 +271,40 @@ val orderSpecifiers = OrderSpecifierTransformer(order)
 ## REP-27 · REP-28 — Soft delete shape
 
 ```kotlin
-// ✅ the fixed three pieces — column + isDeleted getter + delete() transition
-var deletedAt: ZonedDateTime? = null
-    protected set
+// declared once, on the base entity — on by default in every session
+@MappedSuperclass
+@FilterDef(name = SOFT_DELETE_FILTER, defaultCondition = "deleted_at is null", autoEnabled = true)
+abstract class BaseTimeEntity : Logger() { ... }
 
-val isDeleted: Boolean
-    get() = deletedAt != null
+// ✅ the fixed three pieces — column + isDeleted getter + delete() transition — and the filter on the entity
+@Entity
+@Filter(name = SOFT_DELETE_FILTER)
+class Order(...) : BaseTimeEntity() {
+    var deletedAt: Instant? = null
+        protected set
 
-fun delete(now: ZonedDateTime) {                     // the caller passes ZonedDateTime.now(clock) (STY-58)
-    deletedAt = now
-    logger.info { "Order deleted: id=$id, deletedAt=$deletedAt" }   // STY-34 — assigned field only
+    val isDeleted: Boolean
+        get() = deletedAt != null
+
+    fun delete(now: Instant) {                          // the caller passes Instant.now(clock) (STY-58)
+        deletedAt = now
+        logger.info { "Order deleted: id=$id, deletedAt=$deletedAt" }   // STY-34 — assigned field only
+    }
 }
 ```
 
 ```kotlin
-// ✅ single/list read — deletedAt.isNull stated in the where clause
-.where(order.id.eq(id).and(order.deletedAt.isNull))
+// ✅ a query states no deletedAt predicate — the filter adds it
+queryFactory.selectFrom(order).where(by(query)).fetch()
 
-// ✅ paged read — seed the by() builder with it
-private fun by(query: PageOrderQuery): BooleanBuilder =
-    BooleanBuilder(order.deletedAt.isNull)
-        .and(query.startOrderedAt?.let { order.orderedAt.goe(it) })
+// ✅ own-PK read — the filter does not apply to a lookup by primary key, so the Service drops the deleted row
+orderRepository.findByIdOrNull(id)?.takeUnless { it.isDeleted } ?: throw OrderNotFoundException(id)
 
-// ❌ @SQLRestriction / @SQLDelete / @Where — never introduce one
+// ✅ a read that must see deleted rows switches the filter off for its transaction
+softDeleteFilter.includingDeleted { orderRepository.pageByQuery(command.toQuery()) }
+
+// ❌ @SQLRestriction / @SQLDelete / @Where / @SoftDelete — none can be switched off for one read
+// ❌ .and(order.deletedAt.isNull) in a predicate — the filter already adds it
 ```
 
 ```sql
@@ -323,8 +334,7 @@ orderRepository.delete(order)
 class Order(
     memo: String?,
     val createdBy: UUID,
-    @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "member_id")
-    val member: Member,
+    val memberId: UUID,                          // another domain's row — its id only (REP-15)
 ) : BaseTimeEntity() {
     @Id
     val id: UUID = UUID.randomUUID()
@@ -332,14 +342,21 @@ class Order(
     var memo: String? = memo                     // state field (REP-17)
         protected set
 
-    var deletedAt: ZonedDateTime? = null
+    var deletedAt: Instant? = null
         protected set
 
     val isDeleted: Boolean                       // computed property over the backing field
         get() = deletedAt != null
+}
 
-    val memberGrade: MemberGrade                 // delegated — don't duplicate the column
-        get() = member.grade
+@Entity
+class OrderItem(
+    @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "order_id")
+    val order: Order,                            // same domain — an association (REP-15)
+    val productId: UUID,
+) {
+    val orderedAt: Instant                       // delegated to the same-domain parent — don't duplicate the column
+        get() = order.orderedAt
 }
 ```
 
@@ -352,5 +369,5 @@ val totalPrice: Long
     get() = unitPrice * quantity
 
 // ✅ a time-relative judgement takes the time instead of reading the clock
-fun isExpiredAt(now: ZonedDateTime): Boolean = expiresAt.isBefore(now)
+fun isExpiredAt(now: Instant): Boolean = expiresAt.isBefore(now)
 ```

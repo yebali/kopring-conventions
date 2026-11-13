@@ -21,8 +21,8 @@ A table row is a locator: open only the detail sections the relevant rows link t
 |---|---|
 | any `*.kt` | [code-style.md](references/code-style.md) — always |
 | `*Controller.kt`, `controller/rest/*Request.kt` / `*Response.kt`, Feign clients, SSE | [controller.md](references/controller.md) |
-| `*Service.kt`, `service/command/*Command.kt` / `*Result.kt`, domain exceptions, enums and `*EnumMapper`, cross-domain communication, Spring events, message consumers | [service.md](references/service.md) |
-| `@Transactional`, `TransactionRunner`, an external call near a transaction, locks | [transactions.md](references/transactions.md) |
+| `*Service.kt`, `*Facade.kt`, `service/command/*Command.kt` / `*Result.kt`, domain exceptions, enums and `*EnumMapper`, cross-domain communication, Spring events, message consumers | [service.md](references/service.md) |
+| `@Transactional`, a `*Facade`, `TransactionRunner`, an external call near a transaction, locks | [transactions.md](references/transactions.md) |
 | `*Repository.kt`, `Custom*RepositoryImpl.kt`, entities, JSONB, Flyway migrations | [repository.md](references/repository.md) |
 | `application*.yml`, `${...}` placeholders, `@ConfigurationProperties` / `*Properties.kt` | [configuration.md](references/configuration.md) |
 | `*Test.kt` — how a test is written | [testing.md](references/testing.md) |
@@ -35,22 +35,23 @@ Worked examples: `references/examples/{code-style,service,controller,repository,
 
 Without this skill, an agent writing a feature gets these wrong; audits report the code-style rules most. Check each one before you finish:
 
-- **STY-5/29**: ids are `UUID`, and persisted and DTO timestamps are `ZonedDateTime`. Never use `Long` ids (except an explicitly listed generated-`Long`, composite or `String` natural key) or `Instant` fields.
+- **STY-5/29**: ids are `UUID`, and persisted and DTO timestamps are `Instant`. Never use `Long` ids (except an explicitly listed generated-`Long`, composite or `String` natural key) or `ZonedDateTime` fields.
 - **STY-12/54**: put one top-level type per file. Lay out packages as `controller/`, `controller/rest/`, `service/`, `service/command/`, `repository/`, `entity/`. Never use `api/`, `application/` or `domain/`.
-- **STY-11**: a call passing 2+ arguments names them; no lint checks it.
-- **STY-16–18** ([code-style §5](references/code-style.md#5-comments-and-kdoc)): KDoc and line comments are in Korean, current state only, and appear only when a §5.3 trigger holds — never a comment that translates the code or records why it changed.
+- **STY-11**: in a call with 2+ arguments, same-typed arguments and every `Boolean`, `null` or literal are named; no lint checks it.
+- **STY-16–18** ([code-style §5](references/code-style.md#5-comments-and-kdoc)): every public top-level type and public function carries a one-line Korean KDoc that adds a fact its name does not carry. Line comments are Korean, current state only, and appear only when a §5.3 trigger holds — never a comment that translates the code or records why it changed.
 - **STY-19** (§6): a call's result handed straight to the next call (`val saved = repository.save(…)` then `Result.from(saved)`) is inlined with `.let(::from)` unless a keep condition holds.
 - **STY-21–24** (§8): no one- or two-line private method that only delegates; split a public method into step calls once it passes about 20 lines; private-call depth at most 2.
 - **STY-26** (§9): `associateBy`, `groupBy`, `ifBlank` … instead of a `forEach` filling a `mutableMapOf()` or a wrapper around one standard-library call.
-- **STY-27/28** (§10): one `@Transactional` and a synchronous call before `REQUIRES_NEW`, `@Async` or an executor; no interface, base class, flag or optional parameter without a second real use.
+- **STY-27/28** (§10): one Service transaction and a synchronous call before a Facade, `REQUIRES_NEW`, `@Async` or an executor; no interface, base class, flag or optional parameter without a second real use.
 - **SVC-3/4/8**: a Service takes a Command and returns a `*Result`, never a raw `Page`/`List` or a view type. Convert with `request.toCommand()`, `command.toEntity()` and `Result.from(entity)`.
-- **SVC-9/10**: structural validation goes in `Command.init {}`, never Bean Validation (CTL-14).
+- **SVC-9/10/15**: structural validation goes in `Command.init {}` through `requireValid`, never Bean Validation (CTL-14) or the stdlib `require`.
 - **SVC-38/39**: never inject another domain's Service just to tell it about your state change — publish an `*Event`. A state change another deployable makes without the caller waiting goes as a `*Message`, not an HTTP call.
-- **TX-1/2**: `@Transactional` on methods, never on the class. No external call inside a transaction; use an `AFTER_COMMIT` listener or call it outside.
+- **TX-1/2/3**: every `@Service` carries class-level `@Transactional`, with `readOnly = true` on the methods that change nothing. A Service injects no outbound client; a flow with an external call is a `*Facade`, or an `AFTER_COMMIT` listener for a side effect.
 - **CTL-3/11**: a nullable parameter, never `required = false`; paged results as `PaginationResponse`, never `Page`/`PagedModel`.
 - **CFG-12/15**: a `@ConfigurationProperties` field is read by code, and its default lives in the yml only, never as a Kotlin default.
-- **TST-5**: group tests with `@Nested` and name tests and groups with Korean backtick sentences, without `@DisplayName`.
-- **REP-8/9**: two or more filters go into a `*Query` read through `pageByQuery` / `listByQuery`, never a derived `findByAAndBAndC…` or a method taking several filter parameters.
+- **TST-5/6/8**: group tests with `@Nested` and name tests and groups with English backtick sentences, without `@DisplayName`. A controller test extends `WebMvcTestSupport` and mocks the Service; a repository test extends `DataJpaTestSupport`.
+- **REP-8/9/44**: two or more filters go into a `*Query` read through `pageByQuery` / `listByQuery`, never a derived `findByAAndBAndC…` or a method taking several filter parameters. A list read is `listByQuery` from the first one — never a derived `findAllBy*`.
+- **REP-15/27**: a reference to another domain's entity is its id (`memberId: UUID`), never a `@ManyToOne`. A soft-delete query states no `deletedAt.isNull`: the shared `@Filter` adds it. The filter skips primary-key loads (`findById`, a `@ManyToOne`, a to-one `join fetch`), so the Service drops a deleted row itself (`getActiveEntity` or an `isDeleted` check).
 
 ## Rule IDs
 
@@ -67,7 +68,7 @@ Rule IDs take the form `PREFIX-N`:
 | `COV` | Test coverage |
 | `CFG` | Configuration properties |
 
-The IDs come from the codebase these rules were extracted from and are never renumbered except as recorded in the repository's `CHANGELOG.md` (`CTL-30` → `CTL-32`). Gaps in a sequence are project-specific rules that were removed, or a number a consuming project uses for its own rule (`CTL-30`).
+The IDs come from the codebase these rules were extracted from and are never renumbered except as recorded in the repository's `CHANGELOG.md` (`CTL-30` → `CTL-32`). Gaps in a sequence are project-specific rules that were removed, or a number a consuming project uses for its own rule (`CTL-30`, `SVC-43`).
 
 `⚠` marks a rule whose violation corrupts data, breaks the wire contract, or misleads every reader. Check these first in a review.
 

@@ -2,6 +2,74 @@
 
 Rule identifiers added, changed, removed or renumbered, newest first. A consuming project checks this list when it updates the skill, because its own rule document overrides the skill by identifier.
 
+## 2026-11-13
+
+Two batches on one day: fifteen new rules for gaps the rule set left open, and a review of the rules that depart from common Kotlin and Spring practice, decided one by one with the maintainer. Thirteen of those were kept as they were (CTL-14, CTL-19, REP-1, REP-7, SVC-6, REP-35, STY-1, STY-34, CTL-33, STY-54, SVC-3, STY-19, STY-28, COV-6); the rest changed and are listed under "Reversed or relaxed".
+
+Adopting these changes in an existing project — the size of the work, measured by running the lint on one consuming project: about 8,400 Korean test and `@Nested` names (TST-5, TST-6), 100 Services without class-level `@Transactional` (TX-1), 25 derived list queries (REP-44), 8 outbound clients injected into a Service (TX-2). Not counted by the lint: `ZonedDateTime` fields (STY-29), cross-domain `@ManyToOne` mappings (REP-15), `deletedAt.isNull` predicates (REP-27), full-context controller tests (TST-8) and missing public KDoc (STY-16). Until a project has moved, it keeps the earlier rule under the same identifier in its own rule document and lists the lint exceptions in `.convention-lint-ignore`.
+
+- **Setup** (`check-conventions all`, Check F): the three test support classes and the wipe (TST-2, TST-12); the `@FilterDef` and the `SoftDeleteFilter` helper (REP-27); the shared `requireValid` (SVC-15); no global `rollbackOn` override (TX-15); `spring.data.web.pageable.max-page-size` (CTL-34); a timeout property for every outbound client (CFG-21); one mutable test clock, reset after each test (TST-35); `version` in the Response and the PUT Request of each `@Version` entity (TX-16).
+- **Identifiers:** `SVC-43` is skipped, because a consuming project uses it for its own rule.
+
+Reversed or relaxed:
+
+- **Changed** `TX-1`: a `@Service` carries class-level `@Transactional`, with `readOnly = true` on the methods that change nothing; no other bean carries the annotation. It was method-level only.
+- **Changed** `TX-2`, `TX-3`, `TX-4`: a Service injects no outbound bean, and a use case with an external call around its DB work is a `*Facade` (`SVC-30` gains the role). The options "delegate to a collaborator" and "programmatic boundary in the Service" are gone. `STY-27`, `CTL-28`, `TX-5`, `TX-6`, `TX-9` follow.
+- **Changed** `TX-15`: Spring's default rollback rule; a method that can let a checked exception escape declares `rollbackFor`. The global `rollbackOn = ALL_EXCEPTIONS` switch is dropped.
+- **Changed** `REP-15`: a reference to another domain's entity is its id only; `@ManyToOne` stays inside a domain. `STY-14`, `STY-34`, `REP-14`, `REP-21`, `REP-36` follow.
+- **Changed** `REP-27`: deleted rows are left out by one auto-enabled Hibernate `@Filter` that a read can switch off; no predicate repeats `deletedAt.isNull`. An own-PK read is still filtered in the Service (`SVC-18`).
+- **Added** `REP-44`: a list or page read is the repository's one `listByQuery` / `pageByQuery` from the first read on; a derived `findAllBy*` is gone. `REP-2`, `REP-8`, `REP-9` follow.
+- **Changed** `STY-29`: timestamps are `Instant`. `STY-32`, `STY-58`, `CFG-20`, `TST-25`, `REP-40` follow.
+- **Changed** `STY-11`: names are required for same-typed arguments and for a `Boolean`, `null` or literal, not for every call with two arguments.
+- **Changed** `STY-16`: every public top-level type and public function carries a one-line KDoc; a private one keeps the trigger test. Tags stay banned.
+- **Changed** `SVC-10`, `SVC-14`, `SVC-15`: a Command's structural check is `requireValid`, one shared function with `CommonErrorCode.INVALID_PARAMETER`; a named domain exception is for a business failure.
+- **Changed** `TST-2`, `TST-3`, `TST-8`, `TST-33`: three support classes per module — `WebMvcTestSupport` (controllers against mocked Services), `DataJpaTestSupport` (repositories, rolled back), `SpringBootTestSupport` (Services and Facades, real transactions). `TST-15`, `TST-19`, `COV-1`, `COV-2`, `COV-3`, `COV-5`, `COV-6`, `COV-7` follow.
+- **Changed** `TST-11`, `TST-12`, `TST-14`: a Service test's rows are truncated by the support after each test; the rule "never clean up, assert over owned data" is gone.
+- **Changed** `TST-5`, `TST-6`, `TST-19`: test and `@Nested` names are English sentences in backticks.
+
+New rules:
+
+- **Added** `TX-16`: the PUT of a `@Version` entity carries the `version` the client read, and the Service compares it. `TX-14` points to it.
+- **Added** `TX-17`: a `readOnly = true` method writes nothing, directly or through a collaborator.
+- **Added** `TX-18`: a proxy-driven annotation works only on a public method another bean calls.
+- **Added** `SVC-44`: the scope key of a row-scoped operation comes from the principal; an out-of-scope row is a 404.
+- **Added** `SVC-45`: a Command checks the length of every column-bound `String` and the size of every collection.
+- **Added** `STY-59`: a singleton bean's mutable field is a thread-safe type. `STY-35` follows.
+- **Added** `STY-60`: a `when` over an enum or a sealed type has no `else`.
+- **Added** `REP-39`: renaming or removing an entity enum constant ships with a migration that rewrites the stored values.
+- **Added** `REP-40`: a time-range filter is half-open.
+- **Added** `REP-41`: an `orphanRemoval` collection is never reassigned.
+- **Added** `REP-42`: no `Optional`; `getReferenceById` only for a row the transaction already proved to exist.
+- **Added** `REP-43`: no unbounded `findAll()`.
+- **Added** `CTL-34`: a growing collection is paged, and `max-page-size` caps the page.
+- **Added** `CFG-21`: every outbound client declares its timeouts.
+- **Added** `TST-35`: one shared test clock, reset after each test. `STY-58` points to it.
+
+Other changes and fixes:
+
+- **Changed** `SVC-29`: covers external codes only; an unknown value in an `@Enumerated` column fails on load, which REP-39 prevents.
+- **Changed** `COV-1`: one missing-field case omits a primitive field; the page-size boundary is the cap of CTL-34.
+- **Fixed** the `CreateOrderRequest(memberId = …)` test examples (TST-19, TST-20): the Request has no `memberId`, which comes from the principal.
+
+Verified by execution — each behaviour below was run in a throwaway project on Spring Boot 4.1.2 (Hibernate 7.4.13, Spring Framework 7.0.10, Spring Data JPA 4.1.2, Jackson 3.1.7) against PostgreSQL 16.15, 18.7 (the latest release) and 19 RC 2 (general availability is planned for 2026-11-19). All three gave the same result, and the rule text matches what was observed:
+
+- `REP-27`: an auto-enabled `@Filter` declared on a `@MappedSuperclass` filters JPQL and derived queries, `existsById` and `findAllById`; it does not filter `findById`, a lazy `@ManyToOne` or a to-one `join fetch`; a collection is filtered only when it carries `@Filter` itself; `disableFilter` switches the auto-enabled filter off for the session, and the next transaction has it on again.
+- `TX-16`: a stale value assigned to the `@Version` field of a managed entity is ignored and the write goes through.
+- `TX-17`: a dirty-checked change, a `save` and a collaborator's write inside a read-only transaction are all dropped without an error; `saveAndFlush` is rejected by PostgreSQL.
+- `TX-1`, `TX-18`: a method-level `@Transactional` replaces the class-level attributes; a private or self-invoked annotated method gets no transaction and no attributes of its own.
+- `TX-15`: a checked exception commits, `rollbackFor` rolls it back, and `TransactionTemplate` rolls back and wraps it in `UndeclaredThrowableException`.
+- `REP-39`, `REP-41`, `REP-42`: an unknown enum value fails on load; reassigning an `orphanRemoval` collection throws at flush while `clear()` + `addAll()` works; `getReferenceById` of a missing id fails on first access or as a foreign-key violation at flush.
+- `CTL-34`: the page size defaults to 20, is clamped to 2000 without the property and to the configured cap with it, and `size=0` falls back to the default.
+- `STY-29`, `TST-25`, `COV-1`: an `Instant` maps to `timestamp with time zone`, serializes with `Z`, accepts a request offset, and equals its re-read copy only when truncated to micros; a missing `Int` or `Boolean` body field is a 400.
+- `TST-2`, `TST-8`, `TST-19`: `@WebMvcTest` without a controller list loads every controller, no repository and no `DataSource`, and takes a `@MockkBean` Service; `@DataJpaTest` with `replace = NONE` runs transactional, allows bulk DML and rolls back.
+- The lint scripts also pass their fixtures on Linux (mawk 1.3.4, GNU grep 3.11).
+
+Tooling:
+
+- `convention-lint.sh` — new checks: TX-1 (`@Service` without class-level `@Transactional`, or the annotation on another bean), TX-2 (a `*Client` in a Service), TX-18, STY-36, STY-59, SVC-9, CTL-2, CTL-6, REP-8 `get*`, REP-16, REP-35, REP-40, REP-42, REP-44, CFG-15, TST-5 and TST-6 names, TST-31; REP-27 also flags `@SoftDelete`; SVC-13 also reads `requireValid`. Tried against a real project and left agent-judged because most hits were legitimate: STY-33 unit-suffixed constants, STY-54 package names, REP-43 `findAll()`, `getReferenceById`.
+- `scripts/tests/run.sh` copies `tests/tree/` as is, for the checks that read a path (`controller/rest/`, `src/test/`).
+- `check-conventions`: Check F covers the setup items above; a Service with method-level annotations is a `fix`, a Service that calls out, a cross-domain `@ManyToOne` and a derived list query are `ask`. `test-code` writes controller tests in the web slice, and Facade and repository tests.
+
 ## 2026-11-06
 
 Consistency pass: no rule added or renumbered; texts that disagreed with each other now say one thing.
