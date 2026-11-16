@@ -154,7 +154,7 @@ data class ListOrderItemResponse(
 data class GetOrderResponse(
     val id: UUID,
     val lines: List<Line>,           // nested, so lines.size is the line count
-    val shippedLineCount: Int,       // a count over the lines a condition selects
+    val shippedLineCount: Int,       // a count over the lines a condition selects, and no screen lists those lines
     val fulfillmentProgress: Int,    // the zero case and rounding are the server's
     val totalPrice: Long,            // discount and tax rules live on the server
     val isExpired: Boolean,          // judged against the server's clock

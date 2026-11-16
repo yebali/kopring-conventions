@@ -4,7 +4,7 @@ Rule identifiers added, changed, removed or renumbered, newest first. A consumin
 
 ## 2026-11-16
 
-- **Changed** `CTL-31`: the frontend derives only what needs no definition — presence, the count or sum of a whole list, a structural position, display formatting. Every other derived value a screen reads is sent: a count or sum over the elements a condition selects, a difference, ratio, average or progress, a verdict, a value that needs data outside the Response, a policy calculation. The rule was "whatever the frontend can compute from the same Response, except the listed cases", which left a conditional count and an average to the frontend. A child that belongs to a parent is now nested under it. Adopting it: a Response that dropped a conditional count, a difference or an average under the earlier rule sends it again when a screen reads it.
+- **Changed** `CTL-31`: the frontend derives only what needs no definition — presence, the count or sum of a whole list, a structural position, display formatting. Every other derived value a screen reads is sent: a count or sum over the elements a condition selects, a difference, ratio, average or progress, a verdict, a value that needs data outside the Response, a policy calculation. The rule was "whatever the frontend can compute from the same Response, except the listed cases", which left a conditional count and an average to the frontend. A conditional count stays with the frontend when the screen must list the selected elements anyway. A child that belongs to a parent is now nested under it. Adopting it: a Response that dropped a conditional count, a difference or an average under the earlier rule sends it again when a screen reads it.
 
 ## 2026-11-13
 

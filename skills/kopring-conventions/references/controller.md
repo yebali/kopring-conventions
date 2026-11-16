@@ -16,7 +16,7 @@
 | CTL-8 | | Every Response has `from(result…)` (one Result per composed domain) and every Request has `toCommand(…)`; the controller never maps fields | [§4.4](#44-responsefrom-and-requesttocommand) |
 | CTL-9 | | Every wire property and query/path parameter carries an English OpenAPI `description` | [§4.5](#45-openapi-descriptions) |
 | CTL-10 | | No `@Operation` or `@Tag` | [§4.5](#45-openapi-descriptions) |
-| CTL-31 | | The frontend derives only what needs no definition — presence, a whole-list count or sum, a structural position, display formatting; the server sends every other derived value a screen reads, and each fact once | [§4.6](#46-response-fields) |
+| CTL-31 | | The frontend derives only what needs no definition — presence, a whole-list count or sum, a structural position, display formatting; the server sends every other derived value a screen reads (a conditional count only when the screen does not need the selected elements), and each fact once | [§4.6](#46-response-fields) |
 | CTL-32 | | A Response consumed only by the web frontend carries only the fields it reads; an unused field is removed directly and the frontend developers are told | [§4.6](#46-response-fields) |
 | CTL-11 | | Paged responses use `PaginationResponse.from`; other lists use a wrapper Response; never `Page<T>` or a raw list | [§5](#5-response-wrappers-and-json) |
 | CTL-12 | | Responses serialize null fields; no `@JsonInclude(NON_NULL)` | [§5](#5-response-wrappers-and-json) |
@@ -222,7 +222,7 @@ Body DTO, sealed interface and controller parameter examples: [examples](example
 
 Every other derived value is sent when a screen reads it (CTL-32):
 
-- a count or sum over the elements a condition selects — `shippedLineCount`, `inactiveCount`;
+- a count or sum over the elements a condition selects — `shippedLineCount`, `inactiveCount` — unless the screen also needs those selected elements themselves (it lists the live files, so it counts them): then the frontend counts what it already holds;
 - a difference, ratio, average or progress — `remainingAttempts`, `avg`, `progress`; the zero case, rounding and weighting are definitions;
 - a verdict — a permission, `isEditable` over a set of states, `isExpired` or `expiresInSeconds` against the server's clock;
 - a value that needs data outside the Response — the total of a paged list, the zero counts of CTL-13, `isLastAdmin`;
