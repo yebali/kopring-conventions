@@ -2,6 +2,10 @@
 
 Rule identifiers added, changed, removed or renumbered, newest first. A consuming project checks this list when it updates the skill, because its own rule document overrides the skill by identifier.
 
+## 2026-11-16
+
+- **Changed** `CTL-31`: the frontend derives only what needs no definition — presence, the count or sum of a whole list, a structural position, display formatting. Every other derived value a screen reads is sent: a count or sum over the elements a condition selects, a difference, ratio, average or progress, a verdict, a value that needs data outside the Response, a policy calculation. The rule was "whatever the frontend can compute from the same Response, except the listed cases", which left a conditional count and an average to the frontend. A child that belongs to a parent is now nested under it. Adopting it: a Response that dropped a conditional count, a difference or an average under the earlier rule sends it again when a screen reads it.
+
 ## 2026-11-13
 
 Two batches on one day: fifteen new rules for gaps the rule set left open, and a review of the rules that depart from common Kotlin and Spring practice, decided one by one with the maintainer. Thirteen of those were kept as they were (CTL-14, CTL-19, REP-1, REP-7, SVC-6, REP-35, STY-1, STY-34, CTL-33, STY-54, SVC-3, STY-19, STY-28, COV-6); the rest changed and are listed under "Reversed or relaxed".

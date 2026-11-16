@@ -213,8 +213,9 @@ A length or count nobody checked is still enforced — by the column, the driver
 
 - **Only what the frontend reads** — every field is a contract: it has to be documented, kept in sync and kept compatible. An unread field costs that upkeep for nothing, and adding one later is a one-line change.
 - **Direct removal** — the frontend and backend ship as one team; a deprecation phase keeps a dead field alive for a release nobody waits for. Telling the frontend developers in the same change replaces it. A field another deployable reads is code-consumed and is out of this rule's scope.
-- **No derivable values** — a value sent next to its inputs can disagree with them, and the frontend must choose which to believe. Computing it from the inputs leaves one source of truth.
-- **Exceptions** — a permission verdict, a server-time judgement and a rule the frontend cannot see have a single correct owner, the server; recomputing them on the client duplicates logic that then drifts. A job's overall progress is the same case: how the parts add up is the server's choice, and a screen that summed them itself would show a number the server never defined.
+- **A definition has one owner** — a derivation that decides something (which elements count, the zero case, rounding, the current moment, the caller) is a definition. Recomputed on the client, it is copied into every screen and every frontend, and the copies drift the next time the rule changes; sent by the server, it changes in one place. A derivation that decides nothing — presence, a whole-list count or sum, a position, a format — cannot drift from its inputs, so sending it too would state the same fact twice.
+- **A closed list** — "whatever the frontend can compute" left each case to judgment: a conditional count or a ratio is computable from the inputs, yet it carries a definition. Naming the four kinds the frontend derives, and sending everything else, lets two reviewers reach the same answer.
+- **Common practice** — public APIs send derived values that carry a definition: Stripe's invoice sends `amount_remaining` beside `amount_due` and `amount_paid`, and CloudWatch's statistics send `Average` beside `Sum` and `SampleCount`. This rule matches them there and is stricter only on restatements such as a flag beside the timestamp it reads.
 
 ### CTL-13 Count responses include zero counts
 

@@ -124,7 +124,7 @@ fun getOrder(
 ## CTL-31 · CTL-32 — Response fields
 
 ```kotlin
-// ❌ derivable values and an unread field copied from the Result
+// ❌ values the frontend derives without a definition, and an unread field copied from the Result
 data class ListOrderItemResponse(
     val items: List<Item>,
     val itemCount: Int,              // items.size
@@ -139,7 +139,7 @@ data class ListOrderItemResponse(
     )
 }
 
-// ✅ what the frontend reads; it derives the rest
+// ✅ what the frontend reads; it counts, sums and checks presence itself
 data class ListOrderItemResponse(
     val items: List<Item>,
 ) {
@@ -150,13 +150,22 @@ data class ListOrderItemResponse(
     )
 }
 
-// ✅ stays: the server owns these (CTL-31 exceptions)
-data class OrderResponse(
+// ✅ sent: deriving these needs a definition
+data class GetOrderResponse(
     val id: UUID,
+    val lines: List<Line>,           // nested, so lines.size is the line count
+    val shippedLineCount: Int,       // a count over the lines a condition selects
+    val fulfillmentProgress: Int,    // the zero case and rounding are the server's
     val totalPrice: Long,            // discount and tax rules live on the server
     val isExpired: Boolean,          // judged against the server's clock
     val canCancel: Boolean,          // permission and state verdict
-)
+) {
+    data class Line(
+        val id: UUID,
+        val quantity: Int,
+        val shippedAt: Instant?,
+    )
+}
 ```
 
 ## CTL-25 · CTL-26 — Feign client directory layout

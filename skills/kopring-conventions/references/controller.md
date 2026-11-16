@@ -16,7 +16,7 @@
 | CTL-8 | | Every Response has `from(result…)` (one Result per composed domain) and every Request has `toCommand(…)`; the controller never maps fields | [§4.4](#44-responsefrom-and-requesttocommand) |
 | CTL-9 | | Every wire property and query/path parameter carries an English OpenAPI `description` | [§4.5](#45-openapi-descriptions) |
 | CTL-10 | | No `@Operation` or `@Tag` | [§4.5](#45-openapi-descriptions) |
-| CTL-31 | | A value the frontend can compute from the same Response's other fields is not sent (listed exceptions) | [§4.6](#46-response-fields) |
+| CTL-31 | | The frontend derives only what needs no definition — presence, a whole-list count or sum, a structural position, display formatting; the server sends every other derived value a screen reads, and each fact once | [§4.6](#46-response-fields) |
 | CTL-32 | | A Response consumed only by the web frontend carries only the fields it reads; an unused field is removed directly and the frontend developers are told | [§4.6](#46-response-fields) |
 | CTL-11 | | Paged responses use `PaginationResponse.from`; other lists use a wrapper Response; never `Page<T>` or a raw list | [§5](#5-response-wrappers-and-json) |
 | CTL-12 | | Responses serialize null fields; no `@JsonInclude(NON_NULL)` | [§5](#5-response-wrappers-and-json) |
@@ -213,15 +213,24 @@ Body DTO, sealed interface and controller parameter examples: [examples](example
 
 ### 4.6 Response fields
 
-**CTL-31** — A value the frontend can derive from the same Response's other fields is not sent: `itemCount` from the list's length, `totalQuantity` from the items' `quantity`, `isDeleted` from `deletedAt`. The server's entity may expose these as computed properties (REP-34); the Response does not copy them. Exceptions — the value stays in the Response when:
+**CTL-31** — The frontend derives a value only when deriving it needs no definition. The test: computing it decides nothing about which elements count, what happens at zero, how to round, which moment is "now", or who is asking. Four kinds pass, and the Response leaves them out:
 
-- the server owns the decision: a permission verdict (the frontend must not copy the permission matrix), and any value judged against the current time (`isExpired`, `isOverdue`) — the client's clock is not the server's;
-- the frontend cannot know the rule behind it: a price, discount, tax or other policy calculation that lives only on the server, or one that rounds;
-- the frontend lacks the value set it ranges over: the zero counts of CTL-13, because the frontend holds no copy of the backend enum;
-- the value is the overall progress of a job, sent next to its parts' progress: the server decides how the parts add up, and every screen showing the job shows the same number;
-- the field belongs to the shared `PaginationResponse` (CTL-11): its page metadata (`first`, `last`, `totalPages`, …) is one shared contract, not a per-endpoint choice.
+- presence — `isDeleted` from `deletedAt`, `hasLines` from a `lines` list the Response holds;
+- the count or sum of a whole list in the Response, with no condition — `itemCount`, `totalQuantity`;
+- a position in the Response's structure — a tree depth, an ordinal;
+- display formatting — time-zone conversion, number and unit formats, an enum's display label.
 
-❌ `ListOrderItemResponse(items, itemCount, totalQuantity)` → ✅ `ListOrderItemResponse(items)`
+Every other derived value is sent when a screen reads it (CTL-32):
+
+- a count or sum over the elements a condition selects — `shippedLineCount`, `inactiveCount`;
+- a difference, ratio, average or progress — `remainingAttempts`, `avg`, `progress`; the zero case, rounding and weighting are definitions;
+- a verdict — a permission, `isEditable` over a set of states, `isExpired` or `expiresInSeconds` against the server's clock;
+- a value that needs data outside the Response — the total of a paged list, the zero counts of CTL-13, `isLastAdmin`;
+- a policy calculation — a price, a discount, a tax.
+
+Each fact is sent once: not `deletedAt` beside `isDeleted`, not a list of objects beside a list of their ids. A child that belongs to a parent is nested under it (`orders[].lines[]`), so its count is a whole-list count rather than a count of a flat list matched by parent id. The entity may expose any of these as a computed property (REP-34); this rule decides only whether the Response carries it. The shared `PaginationResponse` (CTL-11) is outside the rule: its page metadata (`first`, `last`, `totalPages`, …) is one contract for every endpoint.
+
+❌ `ListOrderItemResponse(items, itemCount, totalQuantity)` → ✅ `ListOrderItemResponse(items)` · ❌ `GetOrderResponse(lines)` with the screen counting `lines.count { it.shippedAt != null }` → ✅ `GetOrderResponse(lines, shippedLineCount)`
 
 **CTL-32** — A Response whose only consumer is the web frontend holds the fields the frontend actually reads, not every field its Result or entity has. A field nobody on the frontend uses is left out; when a screen later needs it, that change adds it. The rule covers every such Response, new or existing. Whether the frontend reads a field is decided from the frontend repository or its committed API spec, never guessed from the backend. An existing unused field is removed directly — there is no `@Schema(deprecated = true)` phase — and the change tells the frontend developers which field went and what replaces it. An endpoint another deployable reads (a Feign client, CTL-25) or an internal endpoint (`/api/v1/internal/**`) is out of scope: its consumer is code, and its fields follow that consumer. A smaller Response is not a licence for a screen-shaped endpoint (CTL-20): the choice is which fields an endpoint of a resource returns, not which endpoints exist.
 
