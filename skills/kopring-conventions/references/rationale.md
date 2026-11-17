@@ -48,13 +48,13 @@ A parameter that only carries a value from the caller to a deeper call encodes "
 
 **Why every public declaration gets one line (STY-16)** — a caller should not have to open a body to learn what a public type or function is for, and "only when a trigger holds" left that to each author's reading of the triggers. One line keeps the cost bounded; the requirement that it add a fact the name does not carry is what keeps it from becoming the name restated. Background paragraphs still sprawl and rot unreviewed, so tags and multi-paragraph KDoc stay out, and a private declaration keeps the trigger test.
 
-**WHY / history / invariants stay out of source** — they are never reviewed at commit time and drift from the code; a stale rationale is worse than none. They belong in the commit body, docs, or test names.
+**Comments describe current behavior only** — a past decision, design rationale, change reason, earlier behavior or future plan does not state what a caller can rely on now. Keep those in decision records, commit messages or the issue tracker. A current contract, precondition, ordering guarantee or operational limit may remain when STY-16 or STY-17 calls for it. Exception KDoc follows the same rule.
 
 **Column alignment is forbidden** because `ktlintFormat` reverts it anyway.
 
 ### STY-18 Deliberate-simplification comment
 
-A deliberate simplification has a ceiling — a global lock, a full scan, a naive heuristic — and the reader at that line is the one who needs to know it before extending the code. The limit is current state, so it passes STY-17; the fixed `// ponytail:` marker keeps such comments distinguishable from rationale comments and greppable as a debt ledger.
+A global lock, a full scan or a naive heuristic has a current operational limit the reader may need before relying on it. The fixed `// ponytail:` marker identifies that limit; it does not permit an explanation of the original decision or a plan for replacing it. Apply the history-and-rationale check before accepting a limit comment.
 
 ### STY-21 Method shape
 

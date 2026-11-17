@@ -306,7 +306,7 @@ Only these kinds of class may inject other domains' repositories (SVC-17). Every
 | (3) Publish a domain event | One domain bundles another's *writes* → publish instead of calling (the default of [SVC-39](#6-cross-domain-access) row 3; listener kind by [SVC-40](#11-spring-events)) | `GroupService.createGroup` publishes `GroupCreatedEvent`; `BoardEventListener` creates the default board in the same transaction |
 | (4) Check for a fake cycle | Check whether the back-reference exists at all — with one direction only there is no cycle, so delete the `@Lazy` | A `@Lazy` whose reverse path does not exist |
 
-Do not extract the shared read contract into a small lookup `@Component` (the read-port escape); use (1)–(3). When `@Lazy` is truly unavoidable (a boundary whose split costs too much), its KDoc states why the cycle cannot be removed and under what condition it could.
+Do not extract the shared read contract into a small lookup `@Component` (the read-port escape); use (1)–(3). When `@Lazy` is truly unavoidable (a boundary whose split costs too much), its KDoc names the current cyclic dependencies and when the lazy dependency is resolved. The approval rationale and any proposed boundary change stay in decision records, not source comments.
 
 Example: [SVC-20](examples/service.md#svc-20--breaking-a-bean-cycle-without-lazy).
 

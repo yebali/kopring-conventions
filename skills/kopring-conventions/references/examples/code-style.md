@@ -173,6 +173,21 @@ val order = orderRepository.save(...)
 if (local.updatedAt.isEqual(remote.updatedAt)) return remote // 동시 갱신 시 remote 우선(LWW), 회원 id 는 tie-break 로 쓰지 않는다
 ```
 
+**Keep only current behavior, including exception KDoc and limit comments:**
+
+```kotlin
+// ❌ a past decision, change reason and future plan
+// 기존에는 계정별 락을 썼지만 교착을 줄이려고 전역 락으로 바꿨다. 처리량이 늘면 다시 나눈다.
+// ✅ the current operational limit only
+// ponytail: 모든 계정의 갱신이 하나의 전역 락에서 직렬 실행된다
+
+// ❌ KDoc carrying change history and rationale
+/** 이전 구현의 동시 갱신 오류를 고치려고 같은 시각에는 원격 값을 선택하도록 변경했다. */
+// ✅ the current contract only
+/** 갱신 시각이 같으면 원격 값을 반환한다. */
+fun selectLatest(local: Snapshot, remote: Snapshot): Snapshot = ...
+```
+
 ## STY-17 — Comment ktlint traps
 
 ```kotlin

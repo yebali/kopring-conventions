@@ -2,6 +2,11 @@
 
 Rule identifiers added, changed, removed or renumbered, newest first. A consuming project checks this list when it updates the skill, because its own rule document overrides the skill by identifier.
 
+## 2026-11-17
+
+- **Changed** `STY-17`, `STY-18`: every source comment and KDoc describes current behavior only. Past decisions, design and change reasons, earlier behavior, ticket or migration history, and future improvement plans stay outside source comments. A `// ponytail:` comment states only the current operational limit and no longer bypasses the rationale check.
+- **Changed** `REP-2`, `SVC-20`: exception KDoc names the current framework constraint, dependencies and behavior; its approval rationale and proposed changes stay in decision records. The rule table, comment decision table, worked examples and `rationale.md` follow the same policy.
+
 ## 2026-11-16
 
 - **Changed** `CTL-31`: the frontend derives only what needs no definition — presence, the count or sum of a whole list, a structural position, display formatting. Every other derived value a screen reads is sent: a count or sum over the elements a condition selects, a difference, ratio, average or progress, a verdict, a value that needs data outside the Response, a policy calculation. The rule was "whatever the frontend can compute from the same Response, except the listed cases", which left a conditional count and an average to the frontend. A conditional count stays with the frontend when the screen must list the selected elements anyway. A child that belongs to a parent is now nested under it. Adopting it: a Response that dropped a conditional count, a difference or an average under the earlier rule sends it again when a screen reads it.

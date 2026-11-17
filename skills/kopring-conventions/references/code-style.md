@@ -21,8 +21,8 @@
 | STY-14 | | No sub-domain inside a domain that replicates the layer tree | [§4](#4-files-and-packages) |
 | STY-15 | | Search the shared util locations before writing a util; place it by scope of use | [§4](#4-files-and-packages) |
 | STY-16 | | Every public top-level type and public function carries a one-line KDoc summary without tags; a private one only when a trigger of the decision table holds | [§5](#5-comments-and-kdoc) |
-| STY-17 | | Line comments only on genuinely complex logic, in present tense and domain vocabulary — never history, rationale or code translation | [§5](#5-comments-and-kdoc) |
-| STY-18 | | A deliberate simplification may carry one `// ponytail:` comment in Korean naming its limit and how to lift it | [§5](#5-comments-and-kdoc) |
+| STY-17 | | Comments and KDoc state current behavior only; line comments only on genuinely complex logic, in Korean domain vocabulary — no past decisions, change reasons, history or future plans | [§5](#5-comments-and-kdoc) |
+| STY-18 | | A current operational limit may carry one Korean `// ponytail:` comment stating that limit only | [§5](#5-comments-and-kdoc) |
 | STY-19 | | Inline every single-use intermediate unless one of the five keep conditions holds | [§6](#6-single-use-intermediates) |
 | STY-20 | | No plumbing parameters on private methods (four carve-outs) | [§7](#7-plumbing-parameters) |
 | STY-21 | | A simple feature stays in its public method; a composed feature lists one private step method per step | [§8](#8-method-shape) |
@@ -162,6 +162,8 @@ Command, Result, Request and Response files sit at their directory root, one cla
 
 ## 5. Comments and KDoc
 
+**Current behavior only.** Every source comment and KDoc states what the code does now: its observable behavior, contract, preconditions, ordering or current operational limits. Never record past design decisions, reasons for a change, earlier behavior or names, rejected alternatives, ticket or migration history, or future improvement plans. This applies to exception KDoc and `// ponytail:` comments too. Keep decisions in the project's decision records and change history in commit messages.
+
 Explanation is split by altitude — what a reader needs before opening a file differs from what they need mid-body:
 
 | What | Where | Why |
@@ -170,30 +172,32 @@ Explanation is split by altitude — what a reader needs before opening a file d
 | What a public function is for, and what its signature does not show | a one-line KDoc above the function (STY-16) | the caller reads it instead of the body |
 | A private declaration's role, when a trigger holds | a one-line KDoc above it (STY-16) | skip it when the name and types predict the body |
 | A genuinely complex line or block | a `//` at that line (STY-17) | only where a careful reader could still misread the logic after reading it once |
-| A known limit of a deliberate simplification | one `// ponytail:` line (STY-18) | the next reader needs the ceiling before relying on the code |
-| Why, background, history | commit-message body · decision records (e.g. `docs/decisions/`) · test names | in source it is never reviewed and rots with the code — a stale rationale is worse than none |
+| A current operational limit | one `// ponytail:` line (STY-18) | the reader needs the current ceiling before relying on the code |
+| Past decisions, rationale, change history and future plans | decision records (e.g. `docs/decisions/`) · commit-message body · issue tracker | these do not describe the code's current behavior |
 
 **STY-16** — Every public top-level type (class, interface, object, enum) and every public function in production code carries a KDoc summary: one line, rarely two, saying what the declaration is for in domain vocabulary — not how it is implemented and not why it exists — and adding at least one fact the name does not carry: what it returns, whom it serves, what it rejects (`/** 주문을 조회한다. */` on `getOrder` adds nothing; `/** 호출자 소유가 아닌 주문은 없는 것으로 답한다. */` does). A function's summary also states what the signature does not show: a side effect its name does not say, an absorbed failure or a return value with a special meaning, an ordering guarantee callers rely on, a precondition, transaction or lock it expects. No `@param`/`@return`/`@throws` tags; the signature already says those. Not covered: an `override` (the supertype's summary applies), a property or constructor parameter, a nested type (the enclosing type's summary covers it), and `src/test/**` ([TST-1](testing.md#3-test-structure)). A private or internal declaration gets a summary only when a trigger in the decision table ([§5.3](#53-deciding-a-comment-finding)) holds. A summary that keeps growing past ~3 lines to state *what* is a sign the declaration needs splitting, not a longer comment. The snippets in these reference documents leave the summaries out to stay short; production code does not.
 
 **STY-17** — Line comments are reserved for genuinely complex logic: a branch, calculation, ordering or edge case a careful reader could still get wrong. Most executable lines get none. A self-naming call (`logger.info { }`, `applicationEventPublisher.publishEvent(...)`, a guard clause whose condition names itself), a plain assignment or a one-line CRUD or repository call needs no comment. Tests carry none ([TST-1](testing.md#3-test-structure)).
 
-- **Present tense, current state only.** A comment states what the code does now. It does not say why it was written this way, what it used to be, what it was renamed or moved from, or which ticket or migration changed it; the history words are listed in the *History or rationale* row of the decision table. Rationale belongs in the project's decision records and history in the commit body.
+- **Present tense, current behavior only.** A comment or KDoc states what the code does now. Do not retain a past decision, a reason for the current design or a change, an earlier behavior or name, a rejected alternative, ticket or migration history, or a future improvement plan. The decision table applies to every comment, including approved exceptions and `// ponytail:` limits. Decisions belong in the project's decision records and history in the commit body.
 - **Domain vocabulary, never a translation of the code.** A comment — summary or line comment alike — that renders type and method names back into prose carries no information and drifts on every refactor. Write what it means in domain vocabulary. [Example](examples/code-style.md#sty-16--sty-17--summaries-and-line-comments)
 - **Format.** `//` for line comments, `/** */` for summaries, both written in Korean. Exception messages ([SVC-13](service.md#5-exceptions-and-failure-forms)) and log messages (STY-34, STY-35) are English. Never copy the same TODO or temporary-policy marker verbatim across files — keep one canonical location.
 
-**STY-18** — A deliberate simplification with a known ceiling — a global lock, an O(n²) scan, a naive heuristic — may carry one `// ponytail:` line comment: one Korean sentence that states the limit of the current code and how to lift it.
+**STY-18** — A current operational limit — a global lock, an O(n²) scan, a naive heuristic — may carry one `// ponytail:` line comment: one Korean sentence stating only the current limit. Do not explain why the simplification was chosen or how it might be changed.
 
 ```kotlin
-// ponytail: 전역 락 — 처리량이 문제되면 계정별 락으로 나눈다
+// ponytail: 모든 계정의 갱신이 하나의 전역 락에서 직렬 실행된다
 ```
 
-It describes the current code's ceiling, so it is current state, not rationale or history. Never `#`, never an English sentence, one comment per simplification.
+The marker grants no exception to STY-17: remove any rationale, history or future plan. Never `#`, never an English sentence, one comment per limit.
 
 ### 5.1 What is never commented
 
 **Never commented**: `package` and `import` lines · annotations · property declarations · data-class fields · closing braces · a `logger.info/warn/debug/error { }` line, an `applicationEventPublisher.publishEvent(…)` line, a bare `return X.from(…)` — the message string, the event constructor and the target type already say in domain vocabulary what the line does, so any comment there is translation by construction · `src/test/**` ([TST-1](testing.md#3-test-structure)).
 
-**Not comments** (governed by their own rules; keep writing them): `@field:Schema(description=…)` and `@Parameter(description=…)` ([CTL-9](controller.md#45-openapi-descriptions)) · a KDoc another rule demands as the justification for an approved exception (an `@EntityGraph` exception under [REP-2](repository.md#21-priority), an unavoidable `@Lazy` under [SVC-20](service.md#63-breaking-bean-cycles-without-lazy)).
+**API descriptions** (governed by their own rule; keep writing them): `@field:Schema(description=…)` and `@Parameter(description=…)` ([CTL-9](controller.md#45-openapi-descriptions)).
+
+**Exception KDoc is still KDoc.** An `@EntityGraph` exception under [REP-2](repository.md#21-priority) or an unavoidable `@Lazy` under [SVC-20](service.md#63-breaking-bean-cycles-without-lazy) names only the current constraint and behavior. Its approval, design rationale and change history belong outside source comments.
 
 ### 5.2 ktlint traps
 
@@ -210,12 +214,12 @@ A multi-line call's `(` is unconstrained (`service.foo( // …` passes), and com
 
 ### 5.3 Deciding a comment finding
 
-Every comment finding has exactly one fix, so a review never leaves one for a human to judge. For an existing comment apply the first of the first five rows that matches; for a missing summary use the last two rows. When two outcomes seem possible for a line comment, delete — a missing comment costs less than a stale one.
+Every comment finding has exactly one fix, so a review never leaves one for a human to judge. For an existing comment or KDoc apply the first of the first five rows that matches; for a missing summary use the last two rows. When two outcomes seem possible for a line comment, delete — a missing comment costs less than a stale one.
 
 | Finding | Test | Fix |
 |---|---|---|
-| Limit comment | the comment starts with `// ponytail:` and states a limit of the current code (optionally how to lift it) | keep it; the *History or rationale* row does not apply to it |
-| History or rationale | the text contains a history word (`기존에는` · `예전에는` · `이전에는` · `바뀌었다` · `옮겼다` · `대체했다`), names the ticket that changed it, or says why the code was written this way instead of what it does now | delete that clause; keep the current-state remainder, or delete the comment when nothing is left |
+| Past decision, rationale, history or future plan | the text records a design choice or change reason, earlier behavior (`기존에는` · `예전에는` · `이전에는` · `바뀌었다` · `옮겼다` · `대체했다`), a rejected alternative, ticket or migration history, or a proposed future change; include exception KDoc and `// ponytail:` comments | delete that clause; keep only a current-behavior fact, or delete the comment when nothing is left. Rewrite a mandatory public summary if no current-behavior fact remains |
+| Limit comment | the comment starts with `// ponytail:` and states only a current operational limit | keep it |
 | Code-translating | remove every word that is a name in the declaration or on the line, and nothing is left | a line comment or a private summary: delete; a mandatory public summary (STY-16): rewrite it to state a fact the name does not carry. When a domain fact remains, keep only that fact in domain vocabulary |
 | Line comment on simple logic | the line is none of: a non-obvious ordering or boundary, an arithmetic or encoding choice, the domain meaning of a magic value, a transaction or concurrency ordering constraint, a workaround for a library or platform behavior | delete |
 | Oversized summary | the summary spends more than ~3 lines on *what* | cut to the one line that says what it is for |
@@ -500,7 +504,7 @@ Globally installed skills (`ponytail`, `superpowers`, `supabase-postgres-best-pr
 | ponytail — "no interface with one implementation" | [REP-2](repository.md#21-priority) · [REP-3](repository.md#2-query-construction) · STY-28 | `Custom*Repository` + `Custom*RepositoryImpl` stay even with a single implementation — the Spring Data `*Impl` fragment mechanism registers the bean only in that shape |
 | ponytail — "Fewest files possible" | STY-12 · STY-14 | One top-level type per file (five carve-outs). Command/Result and Request/Response sit at the directory root, one class per file, no subfolders |
 | ponytail — "an `assert`-based `demo()`/`__main__` self-check or one small `test_*.py`. No frameworks, no fixtures" | [TST-2](testing.md#2-test-infrastructure) · [TST-5](testing.md#3-test-structure) · [TST-6](testing.md#3-test-structure) | Extend the layer's test support class, group with `@Nested`, write the backtick method name as an English sentence. ponytail assumes Python; the instruction does not transfer |
-| ponytail — "mark a deliberate simplification with a `ponytail:` comment" | STY-18 | Allowed in the STY-18 form: one `// ponytail:` line comment in Korean naming the limit and how to lift it. Never `#`, never an English sentence |
+| ponytail — "mark a deliberate simplification with a `ponytail:` comment" | STY-18 | Allowed in the STY-18 form: one `// ponytail:` line comment in Korean naming only the current limit. No rationale, history or future plan; never `#`, never an English sentence |
 | supabase-postgres-best-practices — performance advice phrased as raw SQL | [REP-1](repository.md#2-query-construction) · [REP-2](repository.md#21-priority) | **Take the diagnosis** (index choice, query plan, lock mode) and **reject the form**: derived query → QueryDSL → composition in the Service. `@Query` and `@Modifying` stay banned |
 
 Rows 4 and 5 are the pattern to copy: an external rule that is right in intent but wrong in form becomes a format conversion, not a ban. Reach for a ban only when the intent itself contradicts a rule here (rows 1, 2, 3).

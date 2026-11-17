@@ -78,7 +78,7 @@ Rules other files own apply to repository and entity code as well: imports [STY-
 | 3 | **`@EntityGraph` + derived query** | Only for the exception below |
 | 4 | **`@Query` / `@Modifying`** | Prohibited (REP-1) |
 
-**`@EntityGraph` exception** (justified in KDoc): a Java/Kotlin reserved-word property — QueryDSL kapt silently skips the Q-class path for it. The first resort is renaming the property or class away from the reserved word (`@Table` keeps the DB name); `@EntityGraph` + derived query applies only when the rename is impossible. Never work around an `@EntityGraph` limit with a `@Column(insertable = false, updatable = false)` read-only duplicate mapping (REP-14).
+**`@EntityGraph` exception** (KDoc states the current missing Q-class path and the associations loaded; the approval rationale stays in decision records): a Java/Kotlin reserved-word property — QueryDSL kapt silently skips the Q-class path for it. The first resort is renaming the property or class away from the reserved word (`@Table` keeps the DB name); `@EntityGraph` + derived query applies only when the rename is impossible. Never work around an `@EntityGraph` limit with a `@Column(insertable = false, updatable = false)` read-only duplicate mapping (REP-14).
 
 Example: [REP-1 · REP-2](examples/repository.md#rep-1--rep-2--query-construction).
 
