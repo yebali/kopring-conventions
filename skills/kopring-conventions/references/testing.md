@@ -104,7 +104,7 @@ Each module keeps its own support classes, `TestcontainersConfiguration` and gua
 
 | Verification target | Description | Example |
 |---|---|---|
-| HTTP status codes | Correct status code returned | 200, 201, 204, 400, 401, 403, 404, 409 |
+| HTTP status codes and headers | Correct status code, and the headers [CTL-18](controller.md#8-restful-api-design) fixes | 200, 201 + `Location`, 204, 400, 401, 403, 404, 409, 412, 428; `ETag` on a versioned single GET |
 | Request binding | Body, path and query values arrive in the Command the mocked Service receives | `verify { orderService.pageOrders(match { it.status == OrderStatus.PAID }) }` |
 | Request validation | `Command.init {}` runs inside `toCommand`, before the Service is called | Blank strings, out-of-range values → 400 with `$.type` |
 | Error response | The exception a stubbed Service throws becomes its status and its ErrorCode in `$.type` (TST-22) | `every { orderService.getOrder(any()) } throws OrderNotFoundException(orderId)` → 404, `ORDER-1000` |

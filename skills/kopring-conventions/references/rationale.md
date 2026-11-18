@@ -165,17 +165,21 @@ A consistent return shape, easy to extend with metadata, and a clear distinction
 
 A count limit is a property of the request body, so the Command validates it. A size limit on uploaded bytes belongs to the service the bytes actually stream through — the only place that can reject an oversized file before writing it. Moving it elsewhere means either accepting the write and deleting afterwards, or routing bytes through a service with no other reason to see them.
 
-### CTL-18 Response status only CREATED and NO_CONTENT
+### CTL-17 Verbs belong to methods
 
-Unifying everything to 200 OK loses the difference between "created" and "done" for the generated OpenAPI spec and every client. Only the two codes that carry meaning for every client are allowed — 201 for creation by `POST` or an UPSERT `PUT`, 204 for a body-less update of an existing target or a `DELETE`; other successful responses stay 200. An UPSERT exposes its actual creation outcome so the controller selects 201 versus 200/204, so there is no per-endpoint status decision beyond those two shapes.
+The HTTP method already names the action, so a verb in the path says it twice, and a `PUT` on a verb path (`/hold`) has no representation to replace — nothing a `GET` returns and a repeated request reproduces. A noun state resource (`/status`, `/activation`) is addressable and idempotent: the body names the state, so a repeat is a no-op. A `POST` to a noun collection keeps the non-idempotent and one-shot effects out of `PUT`, whose repeats must stay safe.
+
+### CTL-18 Status codes and Location
+
+Without `Location`, a 201 identifies the request URI — the collection — as the created resource (RFC 9110 §15.3.2), so a creating `POST` names the new resource, and only `ResponseEntity` can set that header. The path carries no scheme or host because the service sits behind a gateway whose host it never sees; a host-less path resolves against whatever host the client called.
 
 ### CTL-3 No required false
 
 A parameter-level default object doubly encodes the same "empty" state as a DTO field default. To allow an empty request, the client sends `{}` and every Request field carries a default.
 
-### CTL-19 PUT contracts
+### CTL-19 Complete PUT bodies
 
-PUT supports partial update, full replacement and UPSERT, and PATCH stays out, so every change to an existing URI uses one verb and a client never chooses between two per endpoint. What the change does is then a property of the endpoint, not of the verb, so each endpoint states its contract. The endpoint contract makes omission, explicit null and missing-target behavior predictable. Partial update needs a presence-aware input so omission preserves a value while explicit null clears it. Full replacement describes every updatable field. UPSERT needs a stable target key and atomic uniqueness so repeating or racing the request does not create duplicate resources. Its creation outcome determines the 201 versus 200/204 response (CTL-18).
+A body that is always the complete representation of its URI gives `null` one meaning — clear — so no third state travels from JSON to the Service and PATCH is not needed. A partial change is expressed by a smaller URI whose complete representation is that part; RFC 9110 §9.3.4 names both options, a narrower resource or PATCH, and the rule takes the first.
 
 ### CTL-28 Composition in the inbound adapter
 
@@ -305,7 +309,7 @@ Spring's default is kept so that the code behaves as every Spring reference desc
 
 ### TX-16 Stale writes
 
-`@Version` alone protects overlapping transactions, not the time a form stays open. A full replacement can overwrite newer fields, and a partial update can still overwrite the fields it supplies. A version in the Request lets the Service compare the state the client edited with the current row; the update branch of an UPSERT needs the same protection. A create has no previously read version, and a stale update must not recreate a deleted target. The version travels in the body alongside the supplied fields.
+`@Version` alone protects overlapping transactions, not the time a form stays open. `If-Match` with 412 is HTTP's own conditional-request mechanism for a stale write (RFC 9110 §13.1.1), so the version travels as an entity tag and the representation carries no concurrency field. 428 (RFC 6585) makes the precondition mandatory: a client that leaves the header out is refused instead of overwriting newer data. A PUT response carries no `ETag` because the stored representation need not equal the request content (RFC 9110 §9.3.4), so the client takes a fresh tag from `GET`.
 
 ### TX-17 · TX-18 Annotations that silently do nothing
 

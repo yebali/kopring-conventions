@@ -21,7 +21,7 @@
 | TX-13 | | *If the project uses PostgreSQL:* documents and diagnoses name the lock mode Hibernate emits (`FOR NO KEY UPDATE`), never `FOR UPDATE` | [§4](#4-lock-selection) |
 | TX-14 | ⚠ | A concurrently edited entity carries `@Version`; a counter or balance changes through one conditional atomic UPDATE | [§4](#4-lock-selection) |
 | TX-15 | ⚠ | A transactional method that can let a checked exception escape declares `rollbackFor`; `TransactionRunner` rethrows the original exception | [§2](#2-transaction-boundaries) |
-| TX-16 | ⚠ | A PUT updating an existing `@Version` entity carries the client-read `version`, including partial updates and UPSERT updates; the Service compares it and raises the domain's 409 | [§4](#4-lock-selection) |
+| TX-16 | ⚠ | A `@Version` entity's single GET returns its version as a strong `ETag`; a PUT of CTL-19 form ① or ② on it requires `If-Match` (missing → 428), and the Service compares that version before mutating and raises the domain's 412 | [§4](#4-lock-selection) |
 | TX-17 | ⚠ | A `readOnly = true` method writes nothing, directly or through a collaborator that joins it | [§2](#2-transaction-boundaries) |
 | TX-18 | | A proxy-driven annotation (`@Transactional`, `@Async`, `@Retryable`, `@Cacheable`) works only where another bean's call reaches it: on a public method, never on a private or self-invoked one | [§2](#2-transaction-boundaries) |
 
@@ -142,12 +142,22 @@ Examples: [TX-8 · TX-9](examples/service.md#tx-8--tx-9--lock-selection-advisory
 
 **TX-14** — A read-modify-write through dirty checking loses an update when two requests edit the same row: both read the same state, and the second commit overwrites the first. An entity two requests can edit concurrently (an order a member and an operator both change, a shared settings row) carries `@Version var version: Long = 0` with a `protected set` (column `version bigint not null default 0`); the second commit then fails with `ObjectOptimisticLockingFailureException`, which the global exception handler maps to a 409 so the client re-reads and retries; a stale write that never overlaps another transaction is TX-16. A counter or balance (stock, a quota, a sequence) never goes through read-modify-write: it changes through one conditional atomic UPDATE (`set stock = stock - :n where id = :id and stock >= :n`, a QueryDSL `update` in the `Custom*RepositoryImpl`) whose affected-row count decides success. A pessimistic lock (`PESSIMISTIC_WRITE`, TX-13) is for a short critical section that reads and writes several rows as one step, and is never held across an external call (TX-2).
 
-**TX-16** — `@Version` compares the row with the version the same transaction loaded, so it catches only two transactions that overlap. A client that read the resource minutes ago can pass that check and overwrite a newer value when its PUT arrives: full replacement can overwrite the representation, and a partial update can overwrite any supplied field ([CTL-19](controller.md#8-restful-api-design)). The Response of a `@Version` entity therefore carries `version`; a PUT updating that existing row sends it back, including a partial update or the update branch of an UPSERT, and the Service compares before it mutates:
+**TX-16** — `@Version` compares the row with the version the same transaction loaded, so it catches only two transactions that overlap. A client that read the resource minutes ago loads the current row when its PUT arrives, passes that check, and — a PUT replaces its URI's whole representation ([CTL-19](controller.md#8-restful-api-design)) — writes its stale copy over every field someone else changed in between. A stale write is therefore refused through a conditional request:
+
+- The single-resource `GET` of an entity two users can edit concurrently (`@Version`, TX-14) exposes its version as a strong `ETag: "<version>"`. The Result carries the version; the Response DTO does not.
+- A `PUT` of form ① or ② ([CTL-19](controller.md#8-restful-api-design)) on it requires `If-Match`. The controller reads `@RequestHeader(HttpHeaders.IF_MATCH) ifMatch: String?` and passes it to `toCommand`: a missing header throws the common precondition-required exception (428), otherwise the parsed version goes into the Command.
+- The Service compares that version with the entity's before it mutates and throws the domain's modified exception, mapped to 412.
 
 ```kotlin
+// controller: GET exposes the version, PUT hands If-Match to the Command
+ResponseEntity.ok().eTag(result.version.toString()).body(OrderResponse.from(result))
+orderService.updateOrder(request.toCommand(orderId = orderId, ifMatch = ifMatch))
+// Service
 val order = getEntity(command.orderId)
-if (order.version != command.version) throw OrderModifiedException(order.id)   // the domain's 409
+if (order.version != command.version) throw OrderModifiedException(order.id)   // the domain's 412
 order.update(memo = command.memo, shippingAddress = command.shippingAddress)
 ```
 
-The comparison is explicit code: Hibernate checks a managed entity against the version it loaded and ignores a value assigned to the field, so `order.version = command.version` protects nothing (and REP-17's `protected set` forbids it). `@Version` still covers the overlap between this comparison and the commit (TX-14). The create branch of an UPSERT has no previously read version to compare; an input carrying an existing-row version must not recreate a missing target. An action endpoint that changes one field from the current state (`PUT …/hold`, `POST …/cancellations`) sends no version: the entity's transition guard decides.
+The request body and the Response DTO carry no `version` field. A successful PUT response carries no `ETag` ([CTL-18](controller.md#8-restful-api-design)), so the client reads the resource again before its next edit; list items carry no `ETag`, so an edit starts from the single-resource `GET`. A state setting (form ③), an item UPSERT (form ④), a `POST` event or command and a `DELETE` send no `If-Match`: the entity's transition guard or the item key decides.
+
+The comparison is explicit code: Hibernate checks a managed entity against the version it loaded and ignores a value assigned to the field, so `order.version = command.version` protects nothing (and REP-17's `protected set` forbids it). `@Version` still covers the overlap between this comparison and the commit, which stays TX-14's 409.

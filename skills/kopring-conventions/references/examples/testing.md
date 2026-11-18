@@ -207,12 +207,14 @@ class OrderControllerTest : WebMvcTestSupport() {
         fun `POST api_v1_orders returns 201`() {
             val memberId = UUID.randomUUID()
             val productId = UUID.randomUUID()
-            every { orderService.createOrder(any()) } returns buildCreateOrderResult(status = OrderStatus.PENDING)
+            val result = buildCreateOrderResult(status = OrderStatus.PENDING)
+            every { orderService.createOrder(any()) } returns result
 
             mockMvc.perform(post("/api/v1/orders").with(buildAuth(memberId))
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(CreateOrderRequest(memo = null, items = listOf(CreateOrderRequest.Item(productId = productId, quantity = 1))))))
                 .andExpect(status().isCreated)
+                .andExpect(header().string(HttpHeaders.LOCATION, "/api/v1/orders/${result.id}"))
                 .andExpect(jsonPath("$.status").value(OrderStatus.PENDING.name))
 
             verify { orderService.createOrder(match { it.memberId == memberId && it.items.single().productId == productId }) }

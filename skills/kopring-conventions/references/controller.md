@@ -24,9 +24,9 @@
 | CTL-14 | | No Bean Validation; validation lives in `Command.init {}` and Service `check*` | [§6](#6-validation) |
 | CTL-15 | | A size or count limit is enforced by the service the bytes or the body pass through | [§6](#6-validation) |
 | CTL-16 | | Controllers in `controller/`, Request/Response in `controller/rest/`, no subfolders | [§7](#7-file-layout) |
-| CTL-17 | | URLs name plural resources, `/{id}` for one item, nesting at most two levels (listed exceptions) | [§8](#8-restful-api-design) |
-| CTL-18 | | Creation by POST or PUT returns 201; an existing-target PUT/DELETE returns 200 with a body or 204 without one; an UPSERT selects its status from the Result | [§8](#8-restful-api-design) |
-| CTL-19 | | No PATCH; PUT supports partial update, full replacement and UPSERT with an explicit field-presence and existence contract; a DELETE takes no body | [§8](#8-restful-api-design) |
+| CTL-17 | | URLs name plural resources, `/{id}` for one item, nesting at most two levels, no verb in a path segment (listed exceptions); a state is set by `PUT` on a noun state sub-resource, an event or one-shot command is a `POST` to a noun collection | [§8](#8-restful-api-design) |
+| CTL-18 | | A creating POST returns 201 with a host-less `Location` through `ResponseEntity.created`; a creating PUT returns 201; any other PUT and a DELETE return 204; `@ResponseStatus` only `NO_CONTENT`; no `ETag` on a PUT response | [§8](#8-restful-api-design) |
+| CTL-19 | | No PATCH; a PUT makes its URI's state equal to a complete body in one of four forms, and a partial change targets a smaller URI; a DELETE takes no body | [§8](#8-restful-api-design) |
 | CTL-20 | | No screen- or widget-shaped endpoint; a system-administrator-only endpoint is under `/api/v1/admin` | [§8](#8-restful-api-design) |
 | CTL-21 | | One read endpoint per resource: type and lookup key are filters or response fields; `/search` only for POST reads with a body | [§8](#8-restful-api-design) |
 | CTL-22 | | An endpoint carries only resources its own deployable owns | [§8](#8-restful-api-design) |
@@ -50,9 +50,15 @@ Shared rules apply to controllers too: imports and section banners ([STY-2, STY-
 class OrderController(private val orderService: OrderService) {
 
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    fun createOrder(@RequestBody request: CreateOrderRequest, authUser: AuthUser): CreateOrderResponse =
-        orderService.createOrder(request.toCommand(authUser.id)).let(CreateOrderResponse::from)
+    fun createOrder(
+        @RequestBody request: CreateOrderRequest,
+        authUser: AuthUser,
+        httpRequest: HttpServletRequest,
+    ): ResponseEntity<CreateOrderResponse> =
+        orderService.createOrder(request.toCommand(authUser.id)).let { result ->
+            ResponseEntity.created(URI.create("${httpRequest.contextPath}/api/v1/orders/${result.id}"))
+                .body(CreateOrderResponse.from(result))
+        }
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
@@ -66,16 +72,16 @@ class OrderController(private val orderService: OrderService) {
 
 ```kotlin
 // ❌ principal + Authorization duplication + manual parsing
-fun createOrder(@RequestBody req: CreateOrderRequest, @RequestHeader("Authorization") authorization: String, authUser: AuthUser) =
-    orderService.createOrder(req.toCommand(authUser, authorization.removePrefix("Bearer "))).let(CreateOrderResponse::from)
+fun searchOrders(@RequestBody req: SearchOrdersRequest, @RequestHeader("Authorization") authorization: String, authUser: AuthUser) =
+    orderService.searchOrders(req.toCommand(authUser, authorization.removePrefix("Bearer "))).let(SearchOrdersResponse::from)
 // ✅ authUser.accessToken (toCommand uses authUser.accessToken / authUser.bearerToken internally)
-fun createOrder(@RequestBody req: CreateOrderRequest, authUser: AuthUser) =
-    orderService.createOrder(req.toCommand(authUser)).let(CreateOrderResponse::from)
+fun searchOrders(@RequestBody req: SearchOrdersRequest, authUser: AuthUser) =
+    orderService.searchOrders(req.toCommand(authUser)).let(SearchOrdersResponse::from)
 ```
 
 **CTL-2** — Every endpoint is prefixed `/api/v1/...`.
 
-**CTL-3** — `required = false` is forbidden on `@RequestParam`, `@RequestHeader` and `@RequestBody`. An optional parameter is nullable (`String?`); a `PUT` body instead follows its declared partial-update, replacement or UPSERT contract ([CTL-19](#8-restful-api-design)). A partial update preserves whether a field was omitted; a nullable property alone cannot distinguish omission from explicit `null`. A `@RequestBody` is always required and has no parameter default object (`= XxxRequest()`); an empty `{}` is allowed through the DTO's field defaults.
+**CTL-3** — `required = false` is forbidden on `@RequestParam`, `@RequestHeader` and `@RequestBody`. An optional query, path or header parameter is nullable (`String?`); in a `PUT` body a nullable field that is omitted or `null` clears its value ([CTL-19](#8-restful-api-design)). A `@RequestBody` is always required and has no parameter default object (`= XxxRequest()`); an empty `{}` is allowed through the DTO's field defaults.
 
 ```kotlin
 // ✅ optional @RequestParam → nullable; @RequestBody → no param default (DTO field defaults handle empty {})
@@ -91,29 +97,28 @@ fun searchOrders(
 
 ## 3. Method order
 
-**CTL-4** — Mapping methods follow CRUD order. State transitions and other action endpoints (`PUT /orders/{id}/hold`, `POST …/cancellations`, `POST`/`DELETE …/edit-lock`) are always the last group, whatever their HTTP method. A `POST` search (body required) counts as Read. It is the same rule as [SVC-21](service.md#7-method-order) for Service methods.
+**CTL-4** — Mapping methods follow CRUD order. State setting and other action endpoints (`PUT /orders/{id}/status`, `POST …/cancellations`, `POST`/`DELETE …/edit-lock`) are always the last group, whatever their HTTP method. A `POST` search (body required) counts as Read. It is the same rule as [SVC-21](service.md#7-method-order) for Service methods.
 
 | Order | Category | Mapping |
 |-------|----------|------|
 | 1 | Create | `@PostMapping` that creates the resource |
 | 2 | Read | `@GetMapping`, and a `POST` search |
-| 3 | Update | `@PutMapping` on the resource |
+| 3 | Update | `@PutMapping` on the resource, an attribute or an item (CTL-19 forms ①②④) |
 | 4 | Delete | `@DeleteMapping` on the resource |
-| 5 | Actions | state transitions and other action endpoints, any HTTP method |
+| 5 | Actions | state setting (CTL-19 form ③), events and other commands, any HTTP method |
 
 `OrderController` reads in this order:
 
 ```text
-POST   /orders                          createOrder
-GET    /orders/{orderId}                getOrder
-GET    /orders                          pageOrder
-GET    /orders/counts                   countOrder
-PUT    /orders/{orderId}                updateOrder
-DELETE /orders/{orderId}                deleteOrder
-PUT    /orders/{orderId}/hold           holdOrder
-PUT    /orders/{orderId}/resume         resumeOrder
-PUT    /orders/{orderId}/complete       completeOrder
-POST   /orders/{orderId}/cancellations  cancelOrder
+POST   /orders                              createOrder
+GET    /orders/{orderId}                    getOrder
+GET    /orders                              pageOrder
+GET    /orders/counts                       countOrder
+PUT    /orders/{orderId}                    updateOrder
+PUT    /orders/{orderId}/shipping-address   updateOrderShippingAddress
+DELETE /orders/{orderId}                    deleteOrder
+PUT    /orders/{orderId}/status             updateOrderStatus
+POST   /orders/{orderId}/cancellations      cancelOrder
 ```
 
 A controller that serves several sub-domains applies the order within each group.
@@ -332,32 +337,50 @@ Resources (nouns) go in the URL, actions (verbs) in the HTTP method. Apply first
 | Single item = `/{id}` | `GET /api/v1/orders/{id}` | `GET /api/v1/orders/get?id=...` |
 | Hierarchical resource = nested path (up to two levels) | `GET /api/v1/orders/{orderId}/items` | `GET /api/v1/order-items?orderId=...` (when ownership is clear) |
 
-A non-CRUD action (state transition, command) is an action endpoint under its resource, never a top-level verb: `PUT /api/v1/orders/{id}/hold`, `PUT /api/v1/orders/{id}/complete`, `POST /api/v1/payments/{paymentId}/refunds`. These are the last group in the controller (CTL-4).
+A path segment is never a verb. A non-CRUD operation takes one of three noun shapes, and these endpoints are the last group in the controller (CTL-4):
 
-**CTL-18** — The outcome decides the status; the verb alone does not:
+| Operation | Shape | ✅ |
+|---|---|---|
+| State setting | `PUT` on a noun state sub-resource, the target state in the body (CTL-19 form ③). The resource's single lifecycle status is `…/status`; an independent flag gets its own noun | `PUT /api/v1/orders/{id}/status` `{"status":"ON_HOLD"}`, `PUT /api/v1/members/{id}/activation` `{"active":false}`, `PUT /api/v1/articles/{id}/publication` `{"published":true}` |
+| Event or one-shot command | `POST` to a noun collection, when the operation is kept as its own record with data (reason, actor, amount) or triggers a one-shot effect (send mail, start a job, verify a code, resend, toggle, increment) | `POST /api/v1/payments/{id}/refunds`, `POST /api/v1/orders/{id}/cancellations` (a cancellation recorded with its reason), `POST /api/v1/email-verifications/{id}/verifications` |
+| Bulk change across many resources | noun `POST` | `POST /api/v1/files/moves` |
 
-| Method shape | Status |
+Only sets a value, idempotent, side effects only on an actual change → `PUT` state; a recorded event or one-shot effect → `POST` event. A state `PUT` that requests the current state again succeeds as a no-op (204); a transition the current state forbids is 409. ❌ `PUT /api/v1/orders/{id}/hold`, `PUT /api/v1/orders/{id}/complete`.
+
+**CTL-18** — Status codes and headers:
+
+| Shape | Response |
 |---|---|
-| `POST` that creates a persisted resource (`create*`, `register*`, `add*`, `link*`, `issue*` of a stored session) | 201 (`@ResponseStatus(HttpStatus.CREATED)` when fixed) |
-| `PUT` UPSERT that creates its target | 201, including a creation with no response body |
-| `PUT` updating an existing target, or `DELETE`, with no response body | 204 (`@ResponseStatus(HttpStatus.NO_CONTENT)` when fixed) |
-| an existing-target `PUT` or a `DELETE` with a response body; any `GET`; a `POST` search, verification, sign-in, callback or asynchronous command that creates no resource | 200 (no annotation when fixed) |
+| `POST` creating a resource that has its own `GET` URI (`create*`, `register*`, `add*`, `link*`, `issue*` of a stored session) | 201 through `ResponseEntity.created(location).body(response)`; `Location` is the new resource's absolute path without scheme or host — `/api/v1/orders/{id}` prefixed by the request's context path — because the service sits behind a gateway whose host it does not see. Never `@ResponseStatus(HttpStatus.CREATED)` |
+| `POST` whose result has no `GET` URI (search, verification, sign-in, callback, asynchronous start, bulk command) | 200 (no annotation), or 204 when nothing is returned |
+| `PUT` that creates its target (CTL-19 form ④) | 201 + representation; `Location` optional, because the target URI is the resource |
+| `PUT` replacing or setting an existing target; `DELETE` | 204 with no body (`@ResponseStatus(HttpStatus.NO_CONTENT)`); 200 + representation only when the client needs values the server computed |
+| any `GET` | 200 (no annotation) |
+| every successful `PUT` | no `ETag` (RFC 9110 §9.3.4: a validator only when the stored representation equals the request content) |
 
-An UPSERT whose create and update branches differ in status returns `ResponseEntity` from the controller: 201 for creation, 200 for an update with a body or 204 for one without it. The Service returns a Result with a domain outcome such as `created: Boolean`, never `HttpStatus` or `ResponseEntity`; the controller only selects the HTTP status and converts through `Response.from(result)` ([CTL-28](#13-thin-controller)). A fixed annotation must not label both UPSERT branches 201 or 204.
+Errors: 400 for a malformed body or a missing required field; 404 for a missing target (CTL-19 forms ①–③); 409 for a transition the current state forbids or another business conflict; 412 for an `If-Match` mismatch and 428 for a missing `If-Match` ([TX-16](transactions.md#4-lock-selection)).
 
-**CTL-19** — No PATCH. A `PUT` may implement partial update, full replacement or UPSERT. Each endpoint documents its supported contract, field-presence rules and behavior when the target is absent; never infer replacement solely from the verb, or switch between partial and full update merely because a field is missing.
+An UPSERT (form ④) returns `ResponseEntity` from the controller: 201 with the representation on creation, 204 on replacement. The Service returns a Result with a domain outcome such as `created: Boolean`, never `HttpStatus` or `ResponseEntity`; the controller only selects the HTTP status and converts through `Response.from(result)` ([CTL-28](#13-thin-controller)).
 
-| Contract | Omitted field | Explicit `null` | Missing target |
+A browser client on another origin reads `Location` and `ETag` only when CORS exposes them (`Access-Control-Expose-Headers`).
+
+**CTL-19** — No PATCH. A `PUT` makes the target URI's state equal to its body: it is idempotent, and its scope is chosen by the URI, never by leaving fields out.
+
+| Form | URI | Body | Target absent |
 |---|---|---|---|
-| Partial update | Preserve the current value | Clear a nullable field; reject a non-nullable field with 400 | 404 unless UPSERT is explicitly supported |
-| Full replacement | All updatable fields belong to the representation; an omitted nullable field clears it, a missing required field is 400 | Clear a nullable field; reject a non-nullable field with 400 | 404 unless UPSERT is explicitly supported |
-| UPSERT | The declared partial-update or replacement rules apply to an existing row; creation validates all required creation fields | The same nullability rules apply | Create the resource at the requested URI or stable natural key |
+| ① Resource replacement | `PUT /orders/{id}` | every updatable field | 404 |
+| ② Attribute replacement | `PUT /orders/{id}/shipping-address`, `/orders/{id}/assignee`, `/comments/{id}/attachments` | the attribute, a group of fields that change together, or a whole list | 404 |
+| ③ State setting | `PUT /orders/{id}/status` | the target state | 404 |
+| ④ Item setting (UPSERT) | `PUT /orders/{id}/participants/{memberId}`, `/boards/{id}/slots/{slot}` | the whole item | created (201); `DELETE` empties it |
 
-For a partial update, preserve the three states (omitted, supplied value, explicit `null`) from Request binding through `toCommand` to the Service. Use an existing presence-aware representation or explicit typed input; a nullable property with a `null` default is insufficient. Structural validation checks supplied values without turning omission into clearing. The Service applies the declared changes explicitly, not through a generic entity-copy helper.
+The body is the complete representation of its URI's resource:
 
-For an UPSERT, the URI or natural key identifies one stable target; replay must not append another resource or repeat one-shot effects. The repository enforces uniqueness and handles concurrent create attempts atomically. The Service decides create versus update and enforces the corresponding authorization and validation; a missing target does not silently turn an update-only endpoint into a create. Updating an existing `@Version` row retains the version check ([TX-16](transactions.md#4-lock-selection)). Creation does not require a version for a row that does not exist; an input carrying an existing-row version must not recreate a deleted target.
+- A required field is non-null with no default. A clearable field is `T? = null`; omitted and `null` both clear it — there is no omitted-versus-`null` distinction and no presence-aware type.
+- A list is sent whole; `[]` removes every element.
+- Server-managed fields (id, timestamps, a status another endpoint owns) and identifiers already in the path are not in the body.
+- A partial change targets a smaller URI (form ② or ④).
 
-Worked contracts and dynamic status selection: [examples](examples/controller.md#ctl-18--ctl-19--put-contracts).
+Not a `PUT`: creation with a server-assigned id (`POST`), anything non-idempotent (toggle, increment, append), a one-shot effect, a bulk change across resources — each is a `POST` noun (CTL-17). Domain events and notifications fire only when a value actually changes. Worked forms: [examples](examples/controller.md#ctl-18--ctl-19--status-codes-and-put-forms).
 
 A `DELETE` never takes a request body — a deletion that needs one (a batch of ids, a reason) is a noun-ified `POST` (`POST /api/v1/files/deletions`, `POST /api/v1/orders/{orderId}/cancellations`), the same shape as `/files/copies` and `/files/moves`.
 
@@ -372,7 +395,7 @@ A `DELETE` never takes a request body — a deletion that needs one (a batch of 
 | `GET /api/v1/members/directory` with `memberIds` | `/members/directory/lookup` |
 | `GET /api/v1/orders?status=PAID` | `GET /api/v1/orders/search?status=...` |
 
-A new type adds an enum value, not an endpoint. A sub-resource read that only repeats what the parent's single read already returns is dropped (`GET /orders/{id}` carries `items[].shipments`, so there is no `GET /orders/{id}/shipments`). Filters, sort and paging are query parameters on the collection path; `/search` is reserved for `POST` reads whose filters need a body (nested arrays or maps, e.g. `POST /api/v1/admin/metrics/series/search` with `selectors[]`), and a `GET` read never ends in `/search`. The rule is about reads; a command or state transition keeps its own action endpoint (CTL-17).
+A new type adds an enum value, not an endpoint. A sub-resource read that only repeats what the parent's single read already returns is dropped (`GET /orders/{id}` carries `items[].shipments`, so there is no `GET /orders/{id}/shipments`). Filters, sort and paging are query parameters on the collection path; `/search` is reserved for `POST` reads whose filters need a body (nested arrays or maps, e.g. `POST /api/v1/admin/metrics/series/search` with `selectors[]`), and a `GET` read never ends in `/search`. The rule is about reads; a command or a state setting keeps its own endpoint (CTL-17).
 
 **CTL-22** — An endpoint's path, request and response carry only resources its own deployable owns ([SVC-38](service.md#6-cross-domain-access)). Another deployable's data is served by that deployable's own API, and the client calls it directly (an account's sign-in history lives in `auth-service` as `GET /api/v1/accounts/{id}/sign-ins`, not on `app-service`'s user endpoint). When a decision depends on another deployable's data, read it through the HTTP client as a guard that rejects (`auth-service` refuses to delete an account while `app-service` reports groups the user still owns). Side work the change triggers in another deployable — e.g. handing over the groups a deleted user owned — travels as a broker message that deployable consumes. Never move the other deployable's data through your own endpoint.
 
@@ -464,7 +487,7 @@ Choose `schema` to match the actual wire shape:
 | branching on or computing from a Service result (`if (group.isPublic) …`, a total over two Results) | a Service method |
 | `when(request.op) { … }` dispatch | a Service method |
 
-Allowed in the controller: flowing Service results straight into `from`, extracting `authUser.id`, and passing an id from one Result into the next Service's Command (`group.ownerId`). Composition calls each domain's Service for its own data; the controller makes no business decision from what comes back. The HTTP-only exception is an UPSERT: it may select 201 versus 200/204 from the Result's `created` outcome (CTL-18), but the create/update decision, persistence, authorization and validation stay in the Service.
+Allowed in the controller: flowing Service results straight into `from`, extracting `authUser.id`, passing an id from one Result into the next Service's Command (`group.ownerId`), and building a creating `POST`'s `Location` from the Result's id (CTL-18). Composition calls each domain's Service for its own data; the controller makes no business decision from what comes back. The HTTP-only exception is an UPSERT: it may select 201 versus 200/204 from the Result's `created` outcome (CTL-18), but the create/update decision, persistence, authorization and validation stay in the Service.
 
 ```kotlin
 // ❌ parsing + enum + dispatch in the controller

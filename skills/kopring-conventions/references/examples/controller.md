@@ -206,32 +206,65 @@ Directory structure (identical for single-domain and cross-cutting clients):
 fun streamOrderEvents(...): SseEmitter { ... }
 ```
 
-## CTL-18 / CTL-19 — PUT contracts
-
-These are alternative endpoint contracts, not modes inferred from which fields the caller sends:
-
-| Contract and current state | Request | Result |
-|---|---|---|
-| Partial update: name `Ada`, memo `old` | `{"name":"Grace"}` | Name `Grace`, memo `old` |
-| Partial update: name `Ada`, memo `old` | `{"memo":null}` | Name `Ada`, memo cleared |
-| Full replacement: name `Ada`, memo `old` | `{"name":"Grace","memo":null}` | Name `Grace`, memo cleared |
-| Full replacement with required name | `{"memo":"new"}` | 400, no write |
-| UPSERT at `/preferences/{userId}` with no existing row | All creation fields | One row at that key, 201 |
-| The same UPSERT with an existing row | Fields according to its declared update contract | Same row updated, 200 with a body or 204 without one |
-
-A partial-update Request and Command carry field presence explicitly; `val memo: String? = null` alone cannot represent both the first and second rows. An UPSERT documents whether its update branch uses partial-update or replacement semantics. A `@Version` target also carries its previously read version on updates (TX-16).
+## CTL-18 · CTL-19 — Status codes and PUT forms
 
 ```kotlin
-// ✅ 생성·수정 판정은 Service 가 끝내고, Controller 는 결과를 HTTP 상태와 응답으로 옮긴다
-@PutMapping("/{userId}")
-fun upsertPreference(@PathVariable userId: UUID, @RequestBody request: UpsertPreferenceRequest): ResponseEntity<PreferenceResponse> =
-    preferenceService.upsertPreference(request.toCommand(userId)).let { result ->
-        ResponseEntity.status(if (result.created) HttpStatus.CREATED else HttpStatus.OK)
-            .body(PreferenceResponse.from(result))
+// ✅ creating POST: 201 with a host-less Location built from the Result's id
+@PostMapping
+fun createOrder(
+    @RequestBody request: CreateOrderRequest,
+    authUser: AuthUser,
+    httpRequest: HttpServletRequest,
+): ResponseEntity<CreateOrderResponse> =
+    orderService.createOrder(request.toCommand(authUser.id)).let { result ->
+        ResponseEntity.created(URI.create("${httpRequest.contextPath}/api/v1/orders/${result.id}"))
+            .body(CreateOrderResponse.from(result))
+    }
+
+// ✅ form ①: the complete body; If-Match becomes the Command's version (TX-16); 204 without ETag
+@PutMapping("/{orderId}")
+@ResponseStatus(HttpStatus.NO_CONTENT)
+fun updateOrder(
+    @PathVariable orderId: UUID,
+    @RequestHeader(HttpHeaders.IF_MATCH) ifMatch: String?,
+    @RequestBody request: UpdateOrderRequest,
+) {
+    orderService.updateOrder(request.toCommand(orderId = orderId, ifMatch = ifMatch))
+}
+
+data class UpdateOrderRequest(val shippingAddress: String, val memo: String? = null) {
+    fun toCommand(orderId: UUID, ifMatch: String?) = UpdateOrderCommand(
+        orderId = orderId,
+        version = ifMatchVersion(ifMatch),
+        shippingAddress = shippingAddress,
+        memo = memo,
+    )
+}
+
+// ✅ form ③: the target state in the body; the current state again is a 204 no-op, a forbidden transition 409
+@PutMapping("/{orderId}/status")
+@ResponseStatus(HttpStatus.NO_CONTENT)
+fun updateOrderStatus(@PathVariable orderId: UUID, @RequestBody request: UpdateOrderStatusRequest) {
+    orderService.updateOrderStatus(request.toCommand(orderId))
+}
+
+// ✅ form ④: the Service decides create versus replace; the controller maps `created` to 201 or 204
+@PutMapping("/{orderId}/participants/{memberId}")
+fun upsertOrderParticipant(
+    @PathVariable orderId: UUID,
+    @PathVariable memberId: UUID,
+    @RequestBody request: UpsertOrderParticipantRequest,
+): ResponseEntity<OrderParticipantResponse> =
+    orderService.upsertOrderParticipant(request.toCommand(orderId = orderId, memberId = memberId)).let { result ->
+        if (result.created) {
+            ResponseEntity.status(HttpStatus.CREATED).body(OrderParticipantResponse.from(result))
+        } else {
+            ResponseEntity.noContent().build()
+        }
     }
 ```
 
-The Result carries `created: Boolean` as a domain outcome, not an HTTP status. Do not put a fixed `@ResponseStatus(CREATED)` on this method: the existing-row branch returns 200. For a body-less UPSERT the corresponding statuses are 201 and 204, not an unconditional 204.
+`memo` omitted and `"memo": null` both clear the memo. `ifMatchVersion` is the project's one shared `If-Match` parser: a missing header throws the common precondition-required exception (428), a value that is not a quoted version fails structural validation (400). `created: Boolean` is a domain outcome of the Result, never an HTTP status.
 
 ## CTL-28 — Thin controller before and after
 
