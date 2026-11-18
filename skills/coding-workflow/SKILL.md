@@ -36,31 +36,30 @@ When you dispatch:
 - Every edit unit's prompt carries the rule IDs (`STY-19`, `SVC-15`, …) and the reference section it must apply — never assume the agent knows the rules — and forbids `git commit`, Gradle runs, and files outside the unit's list.
 - Read-only units use `subagent_type: Explore`; edit units use `general-purpose`.
 - Tier every unit. This list is the single source for every skill; the others cite it:
-  - `model: haiku` — locate or list, a pinned literal edit, or the scan role of [Scan → verify → fix](#scan--verify--fix).
-  - `model: sonnet` — a read-and-summarize `Explore` whose candidates the session verifies before acting on them, a frozen-spec implementation (including tests written from a fixed case list), or the fix role and the re-scan of [Scan → verify → fix](#scan--verify--fix).
-  - `model: opus` — the verify role of [Scan → verify → fix](#scan--verify--fix).
+  - `model: haiku` — locate or list, or a pinned literal edit.
+  - `model: sonnet` — a read-and-summarize `Explore` whose candidates the session verifies before acting on them, a frozen-spec implementation (including tests written from a fixed case list), or the scan and fix roles of [Scan → verify → fix](#scan--verify--fix).
+  - `model: opus` — the verify role and the re-scan of [Scan → verify → fix](#scan--verify--fix).
   - inherit the session model (omit `model`) — rule judgment whose output is applied as given, wording choices (doc edits, KDoc text), authorization, transaction and lock boundaries, migrations, design.
 - A unit that fails, returns empty or misses the spec is re-dispatched one tier up (haiku → sonnet → inherit; an inheriting unit as is) with the exact mismatch in the prompt (`retier:`).
 - **Cap every report** in the prompt (e.g. ≤30 lines, `file:line` + one-line finding, no restating the prompt) — the report lands in the session context.
 
 ### Scan → verify → fix
 
-A scan over several partitions whose findings change code runs as three roles, never as one agent that both finds and edits. `check-conventions` is the full implementation; a scan of five files or fewer in one module runs inline instead. Doc edits (`sync-docs`, wording is session-model work) and plan-only scans (`structure-check`) keep their own tiers.
+A scan over several partitions whose findings change code runs as three roles, never as one agent that both finds and edits. `check-conventions` is the full implementation; a scan of five files or fewer in one module runs inline instead. Doc edits (`sync-docs`, wording is session-model work) and plan-only scans (`structure-check`) keep their own tiers. Haiku is not a scan model: on this rule set it missed most of the violations a Sonnet scan found and the verifier confirmed.
 
 | Role | Model | Unit | Output |
 |---|---|---|---|
-| Scan | `model: haiku` | read-only `Explore` per partition, sized under 100K prompt tokens (Haiku's price rises fivefold past it), in waves of at most 20 | candidate records `file:line · rule · old → new`, quoting the current line in `old` |
+| Scan | `model: sonnet` | read-only `Explore` per partition of about 300 KB of source, in waves of at most 20 | candidate records `file:line · rule · old → new`, quoting the current line in `old` |
 | Verify | `model: opus` | read-only `Explore` per partition | every record re-judged against the code and the rule: `fix` (the final `old → new`), `ask` (the question and its options) or `drop` (one-line reason); it adds nothing the scan missed |
 | Fix | `model: sonnet` | `general-purpose` per partition; shared files keep one owner | each `fix` record applied verbatim after re-reading `old`; a record whose `old` no longer matches comes back unapplied, never re-judged |
 
-The verifier removes false findings but cannot see a miss, so the scan is re-run with `model: sonnet` and verified again when:
+The verifier removes false findings but cannot see a miss, so the scan is re-run with `model: opus` and verified again when:
 
 - a scan report is empty, failed or off-schema;
 - its inspected files miss any it was given;
 - the verifier drops more than 30% of its records;
-- a calibration shadow scan — one or two first-wave partitions scanned again by `model: sonnet` — shows Haiku missing more than 20% of a check group's verified records (then every partition's files for that group are re-scanned).
 
-A unit that still fails after the Sonnet re-scan is finished inline by the session.
+A unit that still fails after the Opus re-scan is finished inline by the session.
 
 ### Review against the plan
 
@@ -80,6 +79,6 @@ After every unit is accepted, the session runs the focused Gradle tests once, th
 - [ ] A dispatch condition above holds; otherwise work inline
 - [ ] Plan frozen by the session; units split by domain, shared files owned once
 - [ ] Independent units in one message, each tiered, report length capped
-- [ ] A code-changing scan ran as Scan → verify → fix (haiku → opus → sonnet), with its re-scan triggers checked
+- [ ] A code-changing scan ran as Scan → verify → fix (sonnet → opus → sonnet), with its re-scan triggers checked
 - [ ] Each unit's diff reviewed against the plan as it returns; mismatches fixed or re-dispatched
 - [ ] Gradle run once by the session, cross-unit contract checked

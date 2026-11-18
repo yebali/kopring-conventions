@@ -16,7 +16,7 @@ Rules are cited by identifier (`STY-19`, `SVC-15`, `TST-22`, `COV-3`, …). The 
 - **Output language**: write the report in the user's language; headings stay in English.
 - **Dispatch**: scan and verification agents are read-only `Explore` subagents, fix units are `general-purpose`; each kind goes out in waves of at most 20 agents, one wave per message. If a subagent lacks a tool, instruct a Bash `find`/`grep` fallback (use `grep -F` or bracketed classes for patterns containing a paren).
 - **Partitions are derived from the filesystem on every run** — never from a remembered list.
-- **Model roles (pinned)** — coding-workflow's [Scan → verify → fix](../coding-workflow/SKILL.md#scan--verify--fix): scan `model: haiku` (Phase 2) → verify `model: opus` (Phase 2.5) → fix `model: sonnet` (Phase 4). A scan record is a candidate, never applied as it stands; the verifier re-judges every record and owns the final `old → new`; a fix unit applies only verified records. A scan that does not hold up is re-run with `model: sonnet` ([Re-scan triggers](#re-scan-triggers)) and verified the same way. Everything else about tiers and retries follows [coding-workflow](../coding-workflow/SKILL.md#parallel-dispatch--model-tiering).
+- **Model roles (pinned)** — coding-workflow's [Scan → verify → fix](../coding-workflow/SKILL.md#scan--verify--fix): scan `model: sonnet` (Phase 2) → verify `model: opus` (Phase 2.5) → fix `model: sonnet` (Phase 4). A scan record is a candidate, never applied as it stands; the verifier re-judges every record and owns the final `old → new`; a fix unit applies only verified records. A scan that does not hold up is re-run with `model: opus` ([Re-scan triggers](#re-scan-triggers)) and verified the same way. Everything else about tiers and retries follows [coding-workflow](../coding-workflow/SKILL.md#parallel-dispatch--model-tiering).
 
 ## Scope — two modes (set by the user's request)
 
@@ -36,7 +36,7 @@ Rules are cited by identifier (`STY-19`, `SVC-15`, `TST-22`, `COV-3`, …). The 
 - Scan and verification agents are read-only — they detect, judge and report; they do NOT apply fixes. The Phase 4 fix is applied by `model: sonnet` fix units and test-writing units; the orchestrator runs the scripts, the moves of Check C and the Gradle verification.
 - The `./gradlew` verification commands in Phase 4 run via Bash.
 
-**Scope partitioning** (unless the small-scope shortcut applies) — both modes batch the Phase 0 file list into partitions sized so a Haiku scan agent stays under 100K prompt tokens, past which its price rises fivefold: the Phase 1 rule brief plus at most about 60K tokens of source (measure with `wc -c` ÷ 3.5; about 45 files at 1K tokens each), keeping each domain directory (a domain's main and test files together when they fit) in one partition. Partitions run in waves of at most 20 agents. Pass each agent its **explicit file list**, not a directory glob. Each partition agent runs every check on its files — no per-check-group split. The union of all partitions MUST cover exactly the in-scope set.
+**Scope partitioning** (unless the small-scope shortcut applies) — both modes batch the Phase 0 file list into partitions of at most about 300 KB of source (about 85K tokens; measure with `wc -c`), keeping each domain directory (a domain's main and test files together when they fit) in one partition. Partitions run in waves of at most 20 agents. Pass each agent its **explicit file list**, not a directory glob. Each partition agent runs every check on its files — no per-check-group split. The union of all partitions MUST cover exactly the in-scope set.
 
 **Prevention first**: the rules this audit reports most often are listed in [kopring-conventions § Rules most often broken](../kopring-conventions/SKILL.md#rules-most-often-broken), which `coding-workflow` has every coding task check. A finding here means that step was skipped — fix it, and when the same rule recurs across runs, tighten that list in the `kopring-conventions` repository (or add an edit-time hook that runs `convention-lint.sh`) rather than relying on this audit.
 
@@ -79,7 +79,7 @@ When rules are added or changed, Phase 1 picks them up automatically — Phase 2
 
 ## Phase 2 — Rule scan (parallel)
 
-Dispatch **one `model: haiku` agent per scope partition** (Explore, in waves). Each partition agent receives the Phase 1 rule brief and runs the full check set on its files (Checks A, B and D on main files; Checks B (test form), D and E on test files); Check C comes from the lint run:
+Dispatch **one `model: sonnet` agent per scope partition** (Explore, in waves). Each partition agent receives the Phase 1 rule brief and runs the full check set on its files (Checks A, B and D on main files; Checks B (test form), D and E on test files); Check C comes from the lint run:
 
 - **Check A — @Service / @Component** (SVC-30, SVC-31): map every `@Service` / `@Component` class to the categories in service.md §10; flag annotation↔category mismatch and suffix↔category mismatch. A mismatch the table decides → `fix`; a class whose category itself is ambiguous (e.g. whether to promote a strategy impl to `@Service`) → `ask`.
 - **Check B — Comment policy** (STY-16, STY-17, STY-18): apply [code-style §5](../kopring-conventions/references/code-style.md#5-comments-and-kdoc). Its §5.3 decision table owns every test and fix, and its "never commented" list (§5.1) is never a finding — this check does not restate either. Report each finding under the table row it matched — **B1** missing class/function summary · **B2** code-translating · **B3** line comment on simple logic · **B4** history or rationale · **B5** oversized summary — **all `fix`**. A `// ponytail:` comment in the STY-18 form is never a B3/B4 finding. Each agent reports the exact replacement (`old → new`, or `delete`); for B1, one record per declaration with the proposed KDoc line, never a per-file count. The verifier confirms or corrects the text; the fix unit applies the verified text.
@@ -104,24 +104,19 @@ Each partition agent also collects, for Phase 3, the **method/util inventory** o
 
 ### Partition completeness — verify, never skip silently
 
-After the parallel agents return, **verify every partition produced a valid structured report** (its `fix` / `ask` records and file inventory). A partition whose agent returned an empty report, an error, a "cannot audit / tool unavailable" message, or no file inventory is a **failed partition** — it did NOT cover its domain. For every failed partition, **re-dispatch it with `model: sonnet`** (as `Explore`; instruct the Bash `find`/`grep` fallback if needed) before proceeding to Phase 4. The audit MUST NOT report results while any partition is unaccounted for — silent partial coverage is the failure mode this guards against.
-
-### Calibration — the first wave
-
-The verifier only removes false findings; it cannot see what a scan missed. So the first wave adds two **shadow partitions** — one main partition rich in Services and Facades, one test-heavy partition — each scanned a second time with `model: sonnet`. After Phase 2.5 verifies both scans, the Haiku **miss rate** of each check group (A, B, D agent-judged, E) is the share of verified Sonnet `fix`/`ask` records that Haiku did not report. In default mode with fewer than four partitions, skip the shadow scan and scan every partition with `model: sonnet` directly — calibration costs more than it saves there.
+After the parallel agents return, **verify every partition produced a valid structured report** (its `fix` / `ask` records and file inventory). A partition whose agent returned an empty report, an error, a "cannot audit / tool unavailable" message, or no file inventory is a **failed partition** — it did NOT cover its domain. For every failed partition, **re-dispatch it with `model: opus`** (as `Explore`; instruct the Bash `find`/`grep` fallback if needed) before proceeding to Phase 4. The audit MUST NOT report results while any partition is unaccounted for — silent partial coverage is the failure mode this guards against.
 
 ### Re-scan triggers
 
-Each trigger re-runs the scan with `model: sonnet` (`Explore`), and its records go through Phase 2.5 like any other:
+Each trigger re-runs the scan with `model: opus` (`Explore`), and its records go through Phase 2.5 like any other:
 
 | Trigger | Re-scan |
 |---|---|
 | A failed partition (above) | the partition |
 | The partition's inspected-file list misses files it was given | the missing files |
 | Phase 2.5 drops more than 30% of a partition's records — a scan that misreads the rules misses violations too | the partition |
-| A check group's calibration miss rate exceeds 20% | every partition's trigger files for that group: Services, Facades and `@Component` classes for A, D's transaction and cross-domain rows; test files for E; all main files for B |
 
-A partition that still fails after the Sonnet re-scan is scanned by the orchestrator itself. Report every trigger that fired, and the miss rates, in the Summary.
+A partition that still fails after the Opus re-scan is scanned by the orchestrator itself. Report every trigger that fired in the Summary.
 
 ## Phase 2.5 — Verification (`model: opus`)
 
@@ -147,7 +142,7 @@ It judges missing-test records the same way (keeps, trims or drops cases, COV-8 
 
 **General test before reporting any candidate**: name what breaks if the two copies drift apart. If nothing does — because a rule forces them to look alike, or because the two copies are never read by the same consumer — it is not duplication.
 
-1. **Local duplication scan (parallel)** — dispatch one `model: haiku` agent per scope partition, in waves (every candidate reaches the user through the judgment queue, so no verifier pass is needed); each scans its partition for intra-partition duplicate / near-duplicate methods and extraction candidates. (Phase 2 partition agents may collect this inline to save round-trips.)
+1. **Local duplication scan (parallel)** — dispatch one `model: sonnet` agent per scope partition, in waves (every candidate reaches the judgment queue, so no verifier pass is needed); each scans its partition for intra-partition duplicate / near-duplicate methods and extraction candidates. (Phase 2 partition agents may collect this inline to save round-trips.)
 2. **Cross-partition consolidation** — merge every partition's method/util inventory and cross-reference it to find logic duplicated *across* modules/domains. This step needs the union of all partition inventories, so it runs after the parallel partition agents return.
 3. **Classify** each candidate by usage span: single-domain / multi-domain within one service / 2+ modules.
 4. **Placement proposal** — per the STY-15 table (code-style §4): 2+ modules → the shared pure-Kotlin module / the shared Spring module; multi-domain within a module → `{module}/.../util/`.
@@ -214,8 +209,7 @@ The audit changes **code** (annotations, comments, signatures, file splits, test
 | Asked / applied | N / N |
 | Duplication candidates asked / applied | N / N |
 | Scan records verified (fix / ask / drop) | N / N / N |
-| Haiku miss rate by check group (calibration) | A N% · B N% · D N% · E N% (or "skipped") |
-| Re-scans with Sonnet (trigger: partitions or files) | N |
+| Re-scans with Opus (trigger: partitions or files) | N |
 | Scope mode | default (base: <detected branch>) / all |
 | Inspected files / in-scope (main · test) | N / N · N / N (coverage confirmed) |
 
@@ -232,8 +226,8 @@ Before reporting, confirm:
 - Phase 3 duplication & extraction review was performed (mandatory).
 - Missing-test records were written by per-module units and their tests were run.
 - Phase 5: docs were reconciled when a doc-visible change was made, otherwise the skip was stated.
-- Scan agents ran as `Explore` with `model: haiku`, partitions sized under the 100K-token tier with domain directories kept whole, in waves of at most 20 — or the small-scope shortcut applied and stated.
-- Calibration ran (or was skipped by its default-mode rule); every re-scan trigger was checked, and each triggered re-scan ran with `model: sonnet` and was verified.
+- Scan agents ran as `Explore` with `model: sonnet`, partitions of about 300 KB of source with domain directories kept whole, in waves of at most 20 — or the small-scope shortcut applied and stated.
+- Every re-scan trigger was checked, and each triggered re-scan ran with `model: opus` and was verified.
 - Every scan record passed a `model: opus` verifier; fix and test units ran with `model: sonnet`; Check C came from the lint run, not an agent.
 - Every verified `fix` record was applied or reported unapplied; every `ask` finding was asked with `AskUserQuestion`, and only the answered ones were applied.
 - The check list came dynamically from Phase 1 (no hardcoding).
