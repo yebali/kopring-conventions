@@ -47,6 +47,7 @@ Without this skill, an agent writing a feature gets these wrong; audits report t
 - **SVC-9/10/15**: structural validation goes in `Command.init {}` through `requireValid`, never Bean Validation (CTL-14) or the stdlib `require`.
 - **SVC-38/39**: never inject another domain's Service just to tell it about your state change — publish an `*Event`. A state change another deployable makes without the caller waiting goes as a `*Message`, not an HTTP call.
 - **TX-1/2/3**: every `@Service` carries class-level `@Transactional`, with `readOnly = true` on the methods that change nothing. A Service injects no outbound client; a flow with an external call is a `*Facade`, or an `AFTER_COMMIT` listener for a side effect.
+- **CTL-19** ([controller §8](references/controller.md#8-restful-api-design)): PUT supports partial update, full replacement and UPSERT under an explicit endpoint contract. Preserve omission versus explicit null in partial updates; UPSERT creation returns 201 and existing-row updates retain TX-16 version checks.
 - **CTL-3/11**: a nullable parameter, never `required = false`; paged results as `PaginationResponse`, never `Page`/`PagedModel`.
 - **CFG-12/15**: a `@ConfigurationProperties` field is read by code, and its default lives in the yml only, never as a Kotlin default.
 - **TST-5/6/8**: group tests with `@Nested` and name tests and groups with English backtick sentences, without `@DisplayName`. A controller test extends `WebMvcTestSupport` and mocks the Service; a repository test extends `DataJpaTestSupport`.

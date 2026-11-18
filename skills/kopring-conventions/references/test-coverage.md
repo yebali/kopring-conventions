@@ -25,12 +25,16 @@ How a test is written (support class, `@Nested`, helpers, assertions) is [testin
 
 | Variation | Verification |
 |---|---|
-| All required values filled | 200, or 201 for a creating POST, or 204 for a `Unit` PUT/DELETE ([CTL-18](controller.md#8-restful-api-design)); the response built from the stubbed Result; the Command carries every value |
-| Optional value omitted (Kotlin nullable or default) | 200 + the Command carries `null` or the default |
+| All required values filled | 200, or 201 for creation by POST/PUT, or 204 for an existing-target body-less PUT/DELETE ([CTL-18](controller.md#8-restful-api-design)); the response built from the stubbed Result; the Command carries every value |
+| Optional value omitted (Kotlin nullable or default) | The endpoint status + the Command follows its declared omission contract; partial-update omission remains distinguishable from explicit `null` |
 | Required value missing (raw JSON body, [TST-20](testing.md#8-controller-tests)) | 400 + ErrorCode in `$.type` (`CommonErrorCode.MISSING_REQUIRED_FIELD`); the Service is not called |
 | Format mismatch or a failed structural check (UUID as an arbitrary string, negative page, an over-length value) | 400 + `$.type` (`CommonErrorCode.INVALID_PARAMETER`, [SVC-15](service.md#5-exceptions-and-failure-forms)); the Service is not called |
 | *If the endpoint is permission-gated:* missing endpoint permission (principal without the permission) | 403 + `$.type` (with the authorization interceptor in the slice, COV-2) |
 | A domain exception the Service can throw (stubbed) — not found, out of scope, conflict | Its status + `$.type`, one case per exception type the endpoint's Service method throws |
+
+For a partial-update PUT, controller cases distinguish an omitted field from explicit `null` and a supplied value, asserting that each reaches the Command distinctly. For replacement, cover missing required fields and the declared clearing of nullable fields. An UPSERT stubs both Service outcomes and asserts 201 on create, 200/204 on update; HTTP conversion never decides whether the target exists.
+
+The Service tests (COV-3) re-read to prove partial update preserves omitted fields and clears explicit nullable fields, replacement applies its full representation, and UPSERT both creates a missing target and updates the existing one. Cover missing creation fields, create/update permissions, repeated and concurrent creates on one key (no duplicate row or one-shot effect), stale existing-row versions and a stale update against a deleted target. Tests follow the supported endpoint contract; a PUT is not required to support all three contracts.
 
 Whether a row is outside the caller's scope is the Service's decision ([SVC-44](service.md#4-validation)) and is tested there (COV-3); the controller test only maps the exception to its 404.
 

@@ -2,6 +2,12 @@
 
 Rule identifiers added, changed, removed or renumbered, newest first. A consuming project checks this list when it updates the skill, because its own rule document overrides the skill by identifier.
 
+## 2026-11-18
+
+- **Changed** `CTL-19`, `CTL-3`: PUT supports partial update, full replacement and UPSERT under an explicit endpoint contract. Partial updates distinguish omitted fields from supplied values and explicit null; update-only endpoints retain 404 for a missing target. UPSERT uses a stable key, creation validation and atomic uniqueness. PATCH stays prohibited.
+- **Changed** `CTL-18`, `CTL-28`: a PUT that creates returns 201; an update returns 200 with a body or 204 without one. The controller may select that HTTP status from an UPSERT Result's creation outcome; the Service still owns the create/update decision.
+- **Clarified** `TX-16`, `COV-1`, `COV-3`: partial updates and existing-row UPSERTs retain version checks; creation has no previously read version, and a stale update must not recreate a deleted target. Coverage includes field presence, both UPSERT branches, replay and concurrent creation. Examples, rationale and lint messages follow these contracts.
+
 ## 2026-11-17
 
 - **Changed** `STY-17`, `STY-18`: every source comment and KDoc describes current behavior only. Past decisions, design and change reasons, earlier behavior, ticket or migration history, and future improvement plans stay outside source comments. A `// ponytail:` comment states only the current operational limit and no longer bypasses the rationale check.

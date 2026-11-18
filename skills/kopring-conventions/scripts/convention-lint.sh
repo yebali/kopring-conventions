@@ -151,7 +151,7 @@ ANNOT_END='(\(|[[:space:]]|$)'                               # annotation not a 
 
 g "$SRC" '!!'                             | fmt '[STY-7] !! forbidden — use requireNotNull(x) { "<context>" }'
 g "$MAIN" '@Query\(|@Modifying'           | fmt '[REP-1] @Query/@Modifying prohibited — derived query → QueryDSL Custom*Repository'
-g "$MAIN" '@ResponseStatus'               | grep -vE 'HttpStatus\.(CREATED|NO_CONTENT)\)' | fmt '[CTL-18] @ResponseStatus only CREATED (creating POST) or NO_CONTENT (body-less PUT/DELETE) — everything else is default 200 OK'
+g "$MAIN" '@ResponseStatus'               | grep -vE 'HttpStatus\.(CREATED|NO_CONTENT)\)' | fmt '[CTL-18] @ResponseStatus only CREATED (creating POST/PUT) or NO_CONTENT (body-less existing-target PUT/DELETE); UPSERT branch statuses use ResponseEntity'
 g "$MAIN" "import (jakarta|javax)\.validation|@Validated$ANNOT_END" | fmt '[CTL-14] Bean Validation prohibited — Command.init{} / Service check*()'
 g "$SRC" '@Suppress\("UNCHECKED_CAST"\)'  | fmt '[STY-8] UNCHECKED_CAST suppress forbidden — use type-safe expressions'
 # TX-1: per file, a class-level @Service needs a class-level @Transactional, and nothing else carries one
@@ -172,7 +172,7 @@ g "$SVC" 'throw (BusinessException|IllegalStateException|IllegalArgumentExceptio
     fmt '[SVC-15] generic/base exception thrown directly — use a named domain subclass with dedicated ErrorCode'
 
 g "$MAIN" 'required[[:space:]]*=[[:space:]]*false' | fmt '[CTL-3] required = false forbidden — make the parameter nullable'
-g "$MAIN" "@PatchMapping$ANNOT_END"       | fmt '[CTL-19] PATCH forbidden — a PUT replaces the whole resource'
+g "$MAIN" "@PatchMapping$ANNOT_END"       | fmt '[CTL-19] PATCH forbidden — use PUT with an explicit partial-update, replacement or UPSERT contract'
 g "$MAIN" '@Operation\(|@Tag\('           | fmt '[CTL-10] @Operation/@Tag forbidden — descriptions live on properties and parameters'
 g "$MAIN" 'Include\.NON_NULL'             | fmt '[CTL-12] NON_NULL forbidden — responses serialize null fields'
 g "$MAIN" "@Lazy$ANNOT_END"               | fmt '[SVC-20] @Lazy forbidden — move the unnatural dependency edge'

@@ -167,19 +167,19 @@ A count limit is a property of the request body, so the Command validates it. A 
 
 ### CTL-18 Response status only CREATED and NO_CONTENT
 
-Unifying everything to 200 OK loses the difference between "created" and "done" for the generated OpenAPI spec and every client. Only the two codes that carry meaning for every client are allowed — 201 for a creating `POST`, 204 for a body-less `PUT`/`DELETE`; everything else stays 200, so there is no per-endpoint status decision beyond those two shapes.
+Unifying everything to 200 OK loses the difference between "created" and "done" for the generated OpenAPI spec and every client. Only the two codes that carry meaning for every client are allowed — 201 for creation by `POST` or an UPSERT `PUT`, 204 for a body-less update of an existing target or a `DELETE`; other successful responses stay 200. An UPSERT exposes its actual creation outcome so the controller selects 201 versus 200/204, so there is no per-endpoint status decision beyond those two shapes.
 
 ### CTL-3 No required false
 
 A parameter-level default object doubly encodes the same "empty" state as a DTO field default. To allow an empty request, the client sends `{}` and every Request field carries a default.
 
-### CTL-19 PUT replaces the whole resource
+### CTL-19 PUT contracts
 
-With full replacement a `null` in the body has one meaning, "clear", so the server needs no third state to tell "unchanged" from "cleared", and the request alone states the result.
+PUT supports partial update, full replacement and UPSERT, and PATCH stays out, so every change to an existing URI uses one verb and a client never chooses between two per endpoint. What the change does is then a property of the endpoint, not of the verb, so each endpoint states its contract. The endpoint contract makes omission, explicit null and missing-target behavior predictable. Partial update needs a presence-aware input so omission preserves a value while explicit null clears it. Full replacement describes every updatable field. UPSERT needs a stable target key and atomic uniqueness so repeating or racing the request does not create duplicate resources. Its creation outcome determines the 201 versus 200/204 response (CTL-18).
 
 ### CTL-28 Composition in the inbound adapter
 
-A response that shows several domains' data is a presentation need, not a business rule, so no domain Service should own it. When the adapter composes, each Service keeps returning its own domain's Result, the Results stay reusable by other callers, and no Service grows an injection whose only purpose is one screen. The adapter only passes ids along and never branches on what comes back; once a decision depends on a Result, it is logic and moves into a Service.
+A response that shows several domains' data is a presentation need, not a business rule, so no domain Service should own it. When the adapter composes, each Service keeps returning its own domain's Result, the Results stay reusable by other callers, and no Service grows an injection whose only purpose is one screen. The adapter only passes ids along; business decisions depending on a Result move into a Service. Selecting an UPSERT HTTP status from its `created` outcome is response conversion, while deciding whether to create or update remains in the Service.
 
 ### CTL-22 Service ownership of endpoints
 
@@ -305,7 +305,7 @@ Spring's default is kept so that the code behaves as every Spring reference desc
 
 ### TX-16 Stale writes
 
-`@Version` alone protects the milliseconds two transactions overlap, not the minutes a form stays open — and with a PUT that replaces the whole resource, the stale form overwrites fields its user never touched. The version has to travel to the client and back for the server to know what the client based its edit on. An `If-Match` header was rejected: the body already carries every field of the resource, and one more field needs no header plumbing in the controller.
+`@Version` alone protects overlapping transactions, not the time a form stays open. A full replacement can overwrite newer fields, and a partial update can still overwrite the fields it supplies. A version in the Request lets the Service compare the state the client edited with the current row; the update branch of an UPSERT needs the same protection. A create has no previously read version, and a stale update must not recreate a deleted target. The version travels in the body alongside the supplied fields.
 
 ### TX-17 · TX-18 Annotations that silently do nothing
 

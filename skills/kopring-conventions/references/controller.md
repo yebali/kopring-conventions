@@ -25,8 +25,8 @@
 | CTL-15 | | A size or count limit is enforced by the service the bytes or the body pass through | [§6](#6-validation) |
 | CTL-16 | | Controllers in `controller/`, Request/Response in `controller/rest/`, no subfolders | [§7](#7-file-layout) |
 | CTL-17 | | URLs name plural resources, `/{id}` for one item, nesting at most two levels (listed exceptions) | [§8](#8-restful-api-design) |
-| CTL-18 | | `@ResponseStatus` only `CREATED` for a creating POST and `NO_CONTENT` for a body-less PUT/DELETE | [§8](#8-restful-api-design) |
-| CTL-19 | | No PATCH; a PUT replaces the whole resource, so a `null` field clears it; a DELETE takes no body | [§8](#8-restful-api-design) |
+| CTL-18 | | Creation by POST or PUT returns 201; an existing-target PUT/DELETE returns 200 with a body or 204 without one; an UPSERT selects its status from the Result | [§8](#8-restful-api-design) |
+| CTL-19 | | No PATCH; PUT supports partial update, full replacement and UPSERT with an explicit field-presence and existence contract; a DELETE takes no body | [§8](#8-restful-api-design) |
 | CTL-20 | | No screen- or widget-shaped endpoint; a system-administrator-only endpoint is under `/api/v1/admin` | [§8](#8-restful-api-design) |
 | CTL-21 | | One read endpoint per resource: type and lookup key are filters or response fields; `/search` only for POST reads with a body | [§8](#8-restful-api-design) |
 | CTL-22 | | An endpoint carries only resources its own deployable owns | [§8](#8-restful-api-design) |
@@ -35,7 +35,7 @@
 | CTL-25 | | A Feign client lives in `<domain>/client/` for one using domain, `<base>/client/` for two or more; one that calls another deployable of the system makes only calls the caller waits on ([SVC-38](service.md#6-cross-domain-access)) | [§11](#11-feign-clients) |
 | CTL-26 | | Feign timeouts come from `Duration` properties; each client translates failures with its `ErrorDecoder`; no raw `FeignException` leaves the client | [§11](#11-feign-clients) |
 | CTL-27 | | An SSE endpoint declares its `@ApiResponse` schema (`oneOf` for variants) | [§12](#12-sse-endpoints) |
-| CTL-28 | | A controller method converts, delegates to the Service (to each domain's Service when composing, to the Facade for a flow with an outbound call) and converts back; it never branches on a result (listed exceptions) | [§13](#13-thin-controller) |
+| CTL-28 | | A controller method converts, delegates to the Service (to each domain's Service when composing, to the Facade for a flow with an outbound call) and converts back; only an UPSERT's HTTP status may branch on its creation outcome (listed exceptions) | [§13](#13-thin-controller) |
 | CTL-29 | | A wire DTO from a shared module maps through `Command.from(wireDto)` and back through `Result.toResponse()` | [§14](#14-shared-module-wire-dto-mapping) |
 | CTL-33 | | A field, enum value or endpoint is removed or renamed directly, without a deprecation phase, and its consumers are told or changed in the same change | [§8](#8-restful-api-design) |
 | CTL-34 | | A collection that grows with use is paged, and `spring.data.web.pageable.max-page-size` caps the page size | [§9](#9-paging) |
@@ -75,7 +75,7 @@ fun createOrder(@RequestBody req: CreateOrderRequest, authUser: AuthUser) =
 
 **CTL-2** — Every endpoint is prefixed `/api/v1/...`.
 
-**CTL-3** — `required = false` is forbidden on `@RequestParam`, `@RequestHeader` and `@RequestBody`. An optional parameter is nullable (`String?`); that reading does not carry over to a `PUT` body, where a `null` or omitted field clears the value ([CTL-19](#8-restful-api-design)). A `@RequestBody` is always required and has no parameter default object (`= XxxRequest()`); an empty `{}` is allowed through the DTO's field defaults.
+**CTL-3** — `required = false` is forbidden on `@RequestParam`, `@RequestHeader` and `@RequestBody`. An optional parameter is nullable (`String?`); a `PUT` body instead follows its declared partial-update, replacement or UPSERT contract ([CTL-19](#8-restful-api-design)). A partial update preserves whether a field was omitted; a nullable property alone cannot distinguish omission from explicit `null`. A `@RequestBody` is always required and has no parameter default object (`= XxxRequest()`); an empty `{}` is allowed through the DTO's field defaults.
 
 ```kotlin
 // ✅ optional @RequestParam → nullable; @RequestBody → no param default (DTO field defaults handle empty {})
@@ -334,15 +334,32 @@ Resources (nouns) go in the URL, actions (verbs) in the HTTP method. Apply first
 
 A non-CRUD action (state transition, command) is an action endpoint under its resource, never a top-level verb: `PUT /api/v1/orders/{id}/hold`, `PUT /api/v1/orders/{id}/complete`, `POST /api/v1/payments/{paymentId}/refunds`. These are the last group in the controller (CTL-4).
 
-**CTL-18** — A method states its status explicitly only when it is not 200:
+**CTL-18** — The outcome decides the status; the verb alone does not:
 
 | Method shape | Status |
 |---|---|
-| `POST` that creates a persisted resource (`create*`, `register*`, `add*`, `link*`, `issue*` of a stored session) and returns it | `@ResponseStatus(HttpStatus.CREATED)` |
-| `PUT` / `DELETE` whose return type is `Unit` (no body) | `@ResponseStatus(HttpStatus.NO_CONTENT)` |
-| any `GET`; a `PUT` / `DELETE` that returns a body; a `POST` that searches, verifies, signs in, calls back, or starts an asynchronous job | 200 (no annotation) |
+| `POST` that creates a persisted resource (`create*`, `register*`, `add*`, `link*`, `issue*` of a stored session) | 201 (`@ResponseStatus(HttpStatus.CREATED)` when fixed) |
+| `PUT` UPSERT that creates its target | 201, including a creation with no response body |
+| `PUT` updating an existing target, or `DELETE`, with no response body | 204 (`@ResponseStatus(HttpStatus.NO_CONTENT)` when fixed) |
+| an existing-target `PUT` or a `DELETE` with a response body; any `GET`; a `POST` search, verification, sign-in, callback or asynchronous command that creates no resource | 200 (no annotation when fixed) |
 
-**CTL-19** — No PATCH, and no partial update. A `PUT` replaces the whole resource representation: its body carries every updatable field, and a nullable field sent as `null` or left out (Jackson binds an absent nullable field to `null`) clears the stored value — never "leave unchanged". CTL-3's nullable-means-optional governs query and path parameters, not what a `PUT` body field means. A `DELETE` never takes a request body — a deletion that needs one (a batch of ids, a reason) is a noun-ified `POST` (`POST /api/v1/files/deletions`, `POST /api/v1/orders/{orderId}/cancellations`), the same shape as `/files/copies` and `/files/moves`.
+An UPSERT whose create and update branches differ in status returns `ResponseEntity` from the controller: 201 for creation, 200 for an update with a body or 204 for one without it. The Service returns a Result with a domain outcome such as `created: Boolean`, never `HttpStatus` or `ResponseEntity`; the controller only selects the HTTP status and converts through `Response.from(result)` ([CTL-28](#13-thin-controller)). A fixed annotation must not label both UPSERT branches 201 or 204.
+
+**CTL-19** — No PATCH. A `PUT` may implement partial update, full replacement or UPSERT. Each endpoint documents its supported contract, field-presence rules and behavior when the target is absent; never infer replacement solely from the verb, or switch between partial and full update merely because a field is missing.
+
+| Contract | Omitted field | Explicit `null` | Missing target |
+|---|---|---|---|
+| Partial update | Preserve the current value | Clear a nullable field; reject a non-nullable field with 400 | 404 unless UPSERT is explicitly supported |
+| Full replacement | All updatable fields belong to the representation; an omitted nullable field clears it, a missing required field is 400 | Clear a nullable field; reject a non-nullable field with 400 | 404 unless UPSERT is explicitly supported |
+| UPSERT | The declared partial-update or replacement rules apply to an existing row; creation validates all required creation fields | The same nullability rules apply | Create the resource at the requested URI or stable natural key |
+
+For a partial update, preserve the three states (omitted, supplied value, explicit `null`) from Request binding through `toCommand` to the Service. Use an existing presence-aware representation or explicit typed input; a nullable property with a `null` default is insufficient. Structural validation checks supplied values without turning omission into clearing. The Service applies the declared changes explicitly, not through a generic entity-copy helper.
+
+For an UPSERT, the URI or natural key identifies one stable target; replay must not append another resource or repeat one-shot effects. The repository enforces uniqueness and handles concurrent create attempts atomically. The Service decides create versus update and enforces the corresponding authorization and validation; a missing target does not silently turn an update-only endpoint into a create. Updating an existing `@Version` row retains the version check ([TX-16](transactions.md#4-lock-selection)). Creation does not require a version for a row that does not exist; an input carrying an existing-row version must not recreate a deleted target.
+
+Worked contracts and dynamic status selection: [examples](examples/controller.md#ctl-18--ctl-19--put-contracts).
+
+A `DELETE` never takes a request body — a deletion that needs one (a batch of ids, a reason) is a noun-ified `POST` (`POST /api/v1/files/deletions`, `POST /api/v1/orders/{orderId}/cancellations`), the same shape as `/files/copies` and `/files/moves`.
 
 **CTL-20** — No screen- or widget-shaped endpoints. When a screen requirement (a dashboard widget, a view toggle) needs data, first check whether an existing resource already expresses it — `/orders` and `/orders/counts` with their filters, sort and `size`. A new endpoint is a RESTful resource of the domain that owns the data, and similar reads (three kinds of ranking; counts per member, per product and per category) are one resource, not one endpoint each. Which widgets show and how the view switches is the client's concern; the server carries only authorization per resource. An endpoint only a system administrator may call has `/api/v1/admin` in its path.
 
@@ -447,7 +464,7 @@ Choose `schema` to match the actual wire shape:
 | branching on or computing from a Service result (`if (group.isPublic) …`, a total over two Results) | a Service method |
 | `when(request.op) { … }` dispatch | a Service method |
 
-Allowed in the controller: flowing Service results straight into `from`, extracting `authUser.id`, and passing an id from one Result into the next Service's Command (`group.ownerId`). Composition calls each domain's Service for its own data; the controller decides nothing from what comes back.
+Allowed in the controller: flowing Service results straight into `from`, extracting `authUser.id`, and passing an id from one Result into the next Service's Command (`group.ownerId`). Composition calls each domain's Service for its own data; the controller makes no business decision from what comes back. The HTTP-only exception is an UPSERT: it may select 201 versus 200/204 from the Result's `created` outcome (CTL-18), but the create/update decision, persistence, authorization and validation stay in the Service.
 
 ```kotlin
 // ❌ parsing + enum + dispatch in the controller
