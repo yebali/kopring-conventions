@@ -14,9 +14,9 @@ Rules are cited by identifier (`STY-19`, `SVC-15`, `TST-22`, `COV-3`, …). The 
 ## Method
 
 - **Output language**: write the report in the user's language; headings stay in English.
-- **Dispatch**: scan-partition agents are read-only `Explore` subagents, all dispatched in one single message. If a subagent lacks a tool, instruct a Bash `find`/`grep` fallback (use `grep -F` or bracketed classes for patterns containing a paren).
+- **Dispatch**: scan and verification agents are read-only `Explore` subagents, fix units are `general-purpose`; each kind goes out in waves of at most 20 agents, one wave per message. If a subagent lacks a tool, instruct a Bash `find`/`grep` fallback (use `grep -F` or bracketed classes for patterns containing a paren).
 - **Partitions are derived from the filesystem on every run** — never from a remembered list.
-- **Model tiers and retries**: [coding-workflow](../coding-workflow/SKILL.md#parallel-dispatch--model-tiering) owns them. Scan agents judge rules and their `fix` records are applied without re-judging, so they inherit the session model.
+- **Model roles (pinned)** — coding-workflow's [Scan → verify → fix](../coding-workflow/SKILL.md#scan--verify--fix): scan `model: haiku` (Phase 2) → verify `model: opus` (Phase 2.5) → fix `model: sonnet` (Phase 4). A scan record is a candidate, never applied as it stands; the verifier re-judges every record and owns the final `old → new`; a fix unit applies only verified records. A scan that does not hold up is re-run with `model: sonnet` ([Re-scan triggers](#re-scan-triggers)) and verified the same way. Everything else about tiers and retries follows [coding-workflow](../coding-workflow/SKILL.md#parallel-dispatch--model-tiering).
 
 ## Scope — two modes (set by the user's request)
 
@@ -29,19 +29,20 @@ Rules are cited by identifier (`STY-19`, `SVC-15`, `TST-22`, `COV-3`, …). The 
 
 - Discover files → **Glob**. Search patterns (annotations, `!!`, `@Query`, …) → **Grep**. Read contents → **Read**.
 - **STY-10 (blank line before the final `return`) has a dedicated detector** — `<kopring-conventions>/scripts/blank-line-before-return.sh`. Run it in report mode during Phase 2 on the in-scope `.kt` files (no arguments in `all` mode = the whole tree) instead of asking an agent to eyeball it: a regex that only checks "is the next line the closing brace" undercounts by ~4x because it misses multi-line `return` expressions. Phase 4 applies its fixes with `--fix` and the same file list — never the whole tree in default mode — then re-runs it in report mode: **0 hits is the self-verification** for that rule.
-- **Check C and Check D's greppable subset have a dedicated detector** — `<kopring-conventions>/scripts/convention-lint.sh` (rule inventory and blind spots in its header; report-only, no fix mode; `BASE_PACKAGE=com.acme` sets the root package for the STY-2 check; the project's documented exceptions live in `.convention-lint-ignore` at the repository root). The orchestrator runs it once during Phase 2 on the in-scope `.kt` files (no arguments in `all` mode); after Phase 4 applies fixes (by the orchestrator — the script never edits), it re-runs it on the edited files — **exit 0 is the self-verification** for those rules. Exit 2 means no file was scanned: fix the file list, never read it as clean.
-- **Agent report schema** — every finding is one record: `file:line · rule (ID, or Check B1–B5) · action (fix|ask) · old → new (or delete)`. `fix` = the cited rule decides the change and the agent gives the exact `old → new`; `ask` = a Phase 4 judgment-queue kind, or a finding with no exact `old → new`. Tell each agent to quote the **current text of the line** in `old` so the orchestrator can verify the line before applying; a record whose `old` does not match the file is dropped, not guessed. Do not repeat an item already reported earlier in the session.
+- **Check C and Check D's greppable subset have a dedicated detector** — `<kopring-conventions>/scripts/convention-lint.sh` (rule inventory and blind spots in its header; report-only, no fix mode; `BASE_PACKAGE=com.acme` sets the root package for the STY-2 check; the project's documented exceptions live in `.convention-lint-ignore` at the repository root). The orchestrator runs it once during Phase 2 on the in-scope `.kt` files (no arguments in `all` mode); after Phase 4 applies fixes (by the fix units — the script never edits), it re-runs it on the edited files — **exit 0 is the self-verification** for those rules. Exit 2 means no file was scanned: fix the file list, never read it as clean.
+- **Agent report schema** — every finding is one record: `file:line · rule (ID, or Check B1–B5) · action (fix|ask) · old → new (or delete)`. `fix` = the cited rule decides the change and the agent gives the exact `old → new`; `ask` = a Phase 4 judgment-queue kind, or a finding with no exact `old → new`. Tell each agent to quote the **current text of the line** in `old` so the verifier and the fix unit can check the line; a record whose `old` does not match the file is dropped, not guessed. Do not repeat an item already reported earlier in the session.
+- **Verified record** (Phase 2.5 output) — `file:line · rule · verdict (fix|ask|drop) · old → new (final) · reason (one line, for ask and drop)`. Only `fix` verdicts reach a fix unit; `ask` verdicts carry the question and its concrete options for the judgment queue.
 - **Missing-test record (COV rules)** — `test file (existing or to create) · rule COV-N · action fix · target (Service method / endpoint / area) · cases to add (one line each: input → expected)`. These are written in Phase 4 by test-writing units, not as `old → new`.
-- Scan-partition agents are read-only — they detect and report; they do NOT apply fixes. The Phase 4 fix is applied by the main orchestrator (and its test-writing units).
+- Scan and verification agents are read-only — they detect, judge and report; they do NOT apply fixes. The Phase 4 fix is applied by `model: sonnet` fix units and test-writing units; the orchestrator runs the scripts, the moves of Check C and the Gradle verification.
 - The `./gradlew` verification commands in Phase 4 run via Bash.
 
-**Scope partitioning** (unless the small-scope shortcut applies) — both modes batch the Phase 0 file list into partitions of about 150 files, keeping each domain directory (a domain's main and test files together when they fit) in one partition, with at most 20 agents; above 3,000 files the partitions grow instead. Pass each agent its **explicit file list**, not a directory glob. Each partition agent runs every check on its files — no per-check-group split. The union of all partitions MUST cover exactly the in-scope set.
+**Scope partitioning** (unless the small-scope shortcut applies) — both modes batch the Phase 0 file list into partitions sized so a Haiku scan agent stays under 100K prompt tokens, past which its price rises fivefold: the Phase 1 rule brief plus at most about 60K tokens of source (measure with `wc -c` ÷ 3.5; about 45 files at 1K tokens each), keeping each domain directory (a domain's main and test files together when they fit) in one partition. Partitions run in waves of at most 20 agents. Pass each agent its **explicit file list**, not a directory glob. Each partition agent runs every check on its files — no per-check-group split. The union of all partitions MUST cover exactly the in-scope set.
 
 **Prevention first**: the rules this audit reports most often are listed in [kopring-conventions § Rules most often broken](../kopring-conventions/SKILL.md#rules-most-often-broken), which `coding-workflow` has every coding task check. A finding here means that step was skipped — fix it, and when the same rule recurs across runs, tighten that list in the `kopring-conventions` repository (or add an edit-time hook that runs `convention-lint.sh`) rather than relying on this audit.
 
 ## Small-scope shortcut (default mode only)
 
-When the Phase 0 set is **≤ 5 files in one module**, skip the Explore fan-out: the orchestrator reads each file end to end and runs Phase 2 / Phase 3 itself (the scripts and the Phase 1 rule map still apply). Any larger set uses the batching above. The small path does not relax coverage — the Summary still shows inspected / in-scope.
+When the Phase 0 set is **≤ 5 files in one module**, skip the Explore fan-out and the model roles: the orchestrator reads each file end to end, runs Phase 2 / Phase 3 itself and applies the fixes (the scripts and the Phase 1 rule map still apply). Any larger set uses the batching above. The small path does not relax coverage — the Summary still shows inspected / in-scope.
 
 ## Phase 0 — Determine the in-scope file set
 
@@ -72,14 +73,16 @@ Do NOT hardcode the check list. On every run, read the canonical sources in `<ko
 | `service.md` §10 | an `@Service` or `@Component` class (Check A) |
 | `code-style.md` §4 and §20 | a Phase 3 candidate: §4 for its placement, §20 when it involves `ErrorCode` strings (an overlap across services is allowed) |
 
+Write the result once to a **rule brief** file — the Hard Rules rows, the loaded detail sections, and the project's overrides and exemptions — and pass its path to every scan and verification agent, so no agent re-derives it.
+
 When rules are added or changed, Phase 1 picks them up automatically — Phase 2's checks derive from Phase 1's result.
 
 ## Phase 2 — Rule scan (parallel)
 
-Dispatch **one agent per scope partition** (Explore, single message). Each partition agent receives the Phase 1 rule map and runs the full check set on its files (Checks A, B and D on main files; Checks B (test form), D and E on test files); Check C comes from the lint run:
+Dispatch **one `model: haiku` agent per scope partition** (Explore, in waves). Each partition agent receives the Phase 1 rule brief and runs the full check set on its files (Checks A, B and D on main files; Checks B (test form), D and E on test files); Check C comes from the lint run:
 
 - **Check A — @Service / @Component** (SVC-30, SVC-31): map every `@Service` / `@Component` class to the categories in service.md §10; flag annotation↔category mismatch and suffix↔category mismatch. A mismatch the table decides → `fix`; a class whose category itself is ambiguous (e.g. whether to promote a strategy impl to `@Service`) → `ask`.
-- **Check B — Comment policy** (STY-16, STY-17, STY-18): apply [code-style §5](../kopring-conventions/references/code-style.md#5-comments-and-kdoc). Its §5.3 decision table owns every test and fix, and its "never commented" list (§5.1) is never a finding — this check does not restate either. Report each finding under the table row it matched — **B1** missing class/function summary · **B2** code-translating · **B3** line comment on simple logic · **B4** history or rationale · **B5** oversized summary — **all `fix`**. A `// ponytail:` comment in the STY-18 form is never a B3/B4 finding. Each agent reports the exact replacement (`old → new`, or `delete`); for B1, one record per declaration with the proposed KDoc line, never a per-file count. The orchestrator applies the text as given, without re-judging.
+- **Check B — Comment policy** (STY-16, STY-17, STY-18): apply [code-style §5](../kopring-conventions/references/code-style.md#5-comments-and-kdoc). Its §5.3 decision table owns every test and fix, and its "never commented" list (§5.1) is never a finding — this check does not restate either. Report each finding under the table row it matched — **B1** missing class/function summary · **B2** code-translating · **B3** line comment on simple logic · **B4** history or rationale · **B5** oversized summary — **all `fix`**. A `// ponytail:` comment in the STY-18 form is never a B3/B4 finding. Each agent reports the exact replacement (`old → new`, or `delete`); for B1, one record per declaration with the proposed KDoc line, never a per-file count. The verifier confirms or corrects the text; the fix unit applies the verified text.
   - **Test files** apply TST-1 instead: every comment other than `// given` / `// when` / `// then` and tool directives is `delete`; B1 never applies to tests.
 - **Check C — File organization** (STY-12): no agent — take the STY-12 hits of the `convention-lint.sh` run, which skips the carve-outs [code-style §4](../kopring-conventions/references/code-style.md#4-files-and-packages) lists. Each hit is a `fix`: the orchestrator moves every extra type into its own file in the same package.
 - **Check D — Every other Hard Rules row**: the `convention-lint.sh` run above covers the greppable subset (report-only; exit 0 = clean, exit 1 = findings as `path:line: [ID] message`). The rule inventory and each rule's blind spots live in the **script's header comment — the single source of truth**; do not re-enumerate them here. The script runs over the in-scope files only; a hit outside them is not this run's finding. Every other row of the Phase 1 rule map is **agent-judged**: report `fix` when the rule's detail section decides the exact change (e.g. a `ZonedDateTime` timestamp field → `Instant`, a duration constant → `Duration`, a stdlib `require` in a Command → `requireValid`, a missing `fallbackExecution = true` on an `AFTER_COMMIT`/`BEFORE_COMMIT` listener (SVC-34), `@PageableDefault` size → 20, a missing `id` tie-break, `takeIf { it.isNotEmpty() }` on a filter → the REP-11 form, a public state setter → `protected set`, an insert of a data-carrying entity behind a UNIQUE constraint → `translateUniqueViolation` (SVC-24; a link follows SVC-25)), and `ask` when the change needs a design choice the rule leaves open (moving work to another class, introducing an `ErrorDecoder`, restructuring a consumer loop). Judgment rules that need care:
@@ -101,7 +104,34 @@ Each partition agent also collects, for Phase 3, the **method/util inventory** o
 
 ### Partition completeness — verify, never skip silently
 
-After the parallel agents return, **verify every partition produced a valid structured report** (its `fix` / `ask` records and file inventory). A partition whose agent returned an empty report, an error, a "cannot audit / tool unavailable" message, or no file inventory is a **failed partition** — it did NOT cover its domain. For every failed partition, **re-dispatch it** (as `Explore`, per the coding-workflow retry rule; instruct the Bash `find`/`grep` fallback if needed) before proceeding to Phase 4. The audit MUST NOT report results while any partition is unaccounted for — silent partial coverage is the failure mode this guards against.
+After the parallel agents return, **verify every partition produced a valid structured report** (its `fix` / `ask` records and file inventory). A partition whose agent returned an empty report, an error, a "cannot audit / tool unavailable" message, or no file inventory is a **failed partition** — it did NOT cover its domain. For every failed partition, **re-dispatch it with `model: sonnet`** (as `Explore`; instruct the Bash `find`/`grep` fallback if needed) before proceeding to Phase 4. The audit MUST NOT report results while any partition is unaccounted for — silent partial coverage is the failure mode this guards against.
+
+### Calibration — the first wave
+
+The verifier only removes false findings; it cannot see what a scan missed. So the first wave adds two **shadow partitions** — one main partition rich in Services and Facades, one test-heavy partition — each scanned a second time with `model: sonnet`. After Phase 2.5 verifies both scans, the Haiku **miss rate** of each check group (A, B, D agent-judged, E) is the share of verified Sonnet `fix`/`ask` records that Haiku did not report. In default mode with fewer than four partitions, skip the shadow scan and scan every partition with `model: sonnet` directly — calibration costs more than it saves there.
+
+### Re-scan triggers
+
+Each trigger re-runs the scan with `model: sonnet` (`Explore`), and its records go through Phase 2.5 like any other:
+
+| Trigger | Re-scan |
+|---|---|
+| A failed partition (above) | the partition |
+| The partition's inspected-file list misses files it was given | the missing files |
+| Phase 2.5 drops more than 30% of a partition's records — a scan that misreads the rules misses violations too | the partition |
+| A check group's calibration miss rate exceeds 20% | every partition's trigger files for that group: Services, Facades and `@Component` classes for A, D's transaction and cross-domain rows; test files for E; all main files for B |
+
+A partition that still fails after the Sonnet re-scan is scanned by the orchestrator itself. Report every trigger that fired, and the miss rates, in the Summary.
+
+## Phase 2.5 — Verification (`model: opus`)
+
+Every scan record passes one verifier before anything is applied. Dispatch one `model: opus` read-only `Explore` agent per partition — or per several small partitions, up to about 200 records — in waves; each receives its records, the rule brief and the detail sections the records cite. For each record the verifier re-reads the cited code with enough surrounding context to judge the rule, then returns a verified record:
+
+- `fix` — the rule decides the change; the final `old → new`, corrected when the proposal was wrong or incomplete.
+- `ask` — the change needs a design choice; the question and its concrete options, for the judgment queue.
+- `drop` — not a violation, `old` does not match the file, or the project's own rule document allows it; one-line reason.
+
+It judges missing-test records the same way (keeps, trims or drops cases, COV-8 included) and adds nothing the scan did not report — a miss is the re-scan's job. The orchestrator keeps each partition's fix / ask / drop counts for the drop-rate trigger.
 
 ## Phase 3 — Duplication & extraction review (ALWAYS runs, cannot be skipped)
 
@@ -117,7 +147,7 @@ After the parallel agents return, **verify every partition produced a valid stru
 
 **General test before reporting any candidate**: name what breaks if the two copies drift apart. If nothing does — because a rule forces them to look alike, or because the two copies are never read by the same consumer — it is not duplication.
 
-1. **Local duplication scan (parallel)** — dispatch one agent per scope partition in a single message; each scans its partition for intra-partition duplicate / near-duplicate methods and extraction candidates. (Phase 2 partition agents may collect this inline to save round-trips.)
+1. **Local duplication scan (parallel)** — dispatch one `model: haiku` agent per scope partition, in waves (every candidate reaches the user through the judgment queue, so no verifier pass is needed); each scans its partition for intra-partition duplicate / near-duplicate methods and extraction candidates. (Phase 2 partition agents may collect this inline to save round-trips.)
 2. **Cross-partition consolidation** — merge every partition's method/util inventory and cross-reference it to find logic duplicated *across* modules/domains. This step needs the union of all partition inventories, so it runs after the parallel partition agents return.
 3. **Classify** each candidate by usage span: single-domain / multi-domain within one service / 2+ modules.
 4. **Placement proposal** — per the STY-15 table (code-style §4): 2+ modules → the shared pure-Kotlin module / the shared Spring module; multi-domain within a module → `{module}/.../util/`.
@@ -135,10 +165,10 @@ Before writing the report, confirm the partitions actually covered the **Phase 0
 - End with a summary table — including an **inspected-files / total-files** row (main and test) proving full coverage.
 
 ### Fix (always — every run)
-- Apply every `fix` finding — Check B included — as the agent's `old → new` text. This always happens — there is no report-only mode. The cited rule decides each change, not taste: a missing KDoc gets the proposed line, a one-use variable (STY-19), a one- or two-line delegating private method (STY-21), or a one-use abstraction other than an interface (STY-28) is folded in, a standard-library re-implementation becomes the standard call (STY-26), a mismatched comment placement is moved, an inconsistent literal becomes the constant its siblings use. A change no rule backs is never invented — that finding is `ask`.
-- **Missing tests** — after the rule fixes, dispatch test-writing units (`general-purpose`, tiered per coding-workflow; one unit per module — concurrent agents in one module conflict on its test-support base class, see `coding-workflow`). Each unit receives its missing-test records, the TST/COV rule IDs, and `references/testing.md` / `references/test-coverage.md`; it writes the tests and nothing else (no production edits, no commit, no Gradle).
+- Apply every verified `fix` record — Check B included — as its verified `old → new` text. Dispatch one `model: sonnet` `general-purpose` fix unit per partition, in waves; each re-reads the target line, applies the record when `old` matches and returns it unapplied when it does not — it never re-judges or invents a change. Records on a file outside every partition's ownership — a shared `ErrorCode`, a test support class, a migration — are applied by the orchestrator, their single owner, together with the Check C moves and the STY-10 `--fix` run. This always happens — there is no report-only mode. The cited rule decides each change, not taste: a missing KDoc gets the proposed line, a one-use variable (STY-19), a one- or two-line delegating private method (STY-21), or a one-use abstraction other than an interface (STY-28) is folded in, a standard-library re-implementation becomes the standard call (STY-26), a mismatched comment placement is moved, an inconsistent literal becomes the constant its siblings use. A change no rule backs is never invented — that finding is `ask`.
+- **Missing tests** — after the rule fixes, dispatch test-writing units (`general-purpose`, `model: sonnet`, with the verified case lists; one unit per module — concurrent agents in one module conflict on its test-support base class, see `coding-workflow`). Each unit receives its missing-test records, the TST/COV rule IDs, and `references/testing.md` / `references/test-coverage.md`; it writes the tests and nothing else (no production edits, no commit, no Gradle).
 - **Judgment queue (`ask`)** — never auto-applied, always asked (next section): a Check A class whose category is ambiguous · STY-27's transaction-boundary relocations (never delete a boundary) · a one-implementation interface (STY-28) · a rename of a public class/file · every Phase 3 duplication candidate · any finding with no rule-backed change.
-- After fixing, run the verification below **only on the modules whose files were edited**: `./gradlew :<module>:ktlintCheck :<module>:compileKotlin :<module>:compileTestKotlin`, plus `convention-lint.sh <edited files>` and `blank-line-before-return.sh <edited files>` (exit 0). Run that module's tests that cover the edited classes and every test written or edited in this run (`./gradlew :<module>:test --tests '<ClassName>*'`); a new test that fails because production behaves differently from the rule is reported, not "fixed" by weakening its assertion. Before each edit, re-read the target line and confirm it matches the agent's `old` text. `ktlintCheck` matters because the comment constraints of code-style §5 can break `check`.
+- After fixing, run the verification below **only on the modules whose files were edited**: `./gradlew :<module>:ktlintCheck :<module>:compileKotlin :<module>:compileTestKotlin`, plus `convention-lint.sh <edited files>` and `blank-line-before-return.sh <edited files>` (exit 0). Run that module's tests that cover the edited classes and every test written or edited in this run (`./gradlew :<module>:test --tests '<ClassName>*'`); a new test that fails because production behaves differently from the rule is reported, not "fixed" by weakening its assertion. A record a fix unit returned unapplied is reported, not retried by guessing. `ktlintCheck` matters because the comment constraints of code-style §5 can break `check`.
 
 ### Ask (judgment queue)
 After the rule-decided fixes are applied and verified, ask the user about every queued item **together** with `AskUserQuestion` — up to 4 questions per call, as many calls as the queue needs. Each question names `file:line`, the rule, what the code does now, and concrete options: the proposed change first (marked `(Recommended)` when a rule leans that way) and "leave as is". Apply each answer as given, re-run the verification above on the touched modules, and report the question, the answer, and what changed. An item without an answer is left untouched.
@@ -183,6 +213,9 @@ The audit changes **code** (annotations, comments, signatures, file splits, test
 | Tests written / failing | N / N |
 | Asked / applied | N / N |
 | Duplication candidates asked / applied | N / N |
+| Scan records verified (fix / ask / drop) | N / N / N |
+| Haiku miss rate by check group (calibration) | A N% · B N% · D N% · E N% (or "skipped") |
+| Re-scans with Sonnet (trigger: partitions or files) | N |
 | Scope mode | default (base: <detected branch>) / all |
 | Inspected files / in-scope (main · test) | N / N · N / N (coverage confirmed) |
 
@@ -199,8 +232,9 @@ Before reporting, confirm:
 - Phase 3 duplication & extraction review was performed (mandatory).
 - Missing-test records were written by per-module units and their tests were run.
 - Phase 5: docs were reconciled when a doc-visible change was made, otherwise the skip was stated.
-- Phase 2 / Phase 3 scan agents dispatched as `subagent_type: Explore` in one single message, in batches of about 150 files with domain directories kept whole and at most 20 agents — or the small-scope shortcut applied and stated.
-- Model tiers and retries followed coding-workflow; Check C came from the lint run, not an agent.
-- Every `fix` finding was applied; every `ask` finding was asked with `AskUserQuestion`, and only the answered ones were applied.
+- Scan agents ran as `Explore` with `model: haiku`, partitions sized under the 100K-token tier with domain directories kept whole, in waves of at most 20 — or the small-scope shortcut applied and stated.
+- Calibration ran (or was skipped by its default-mode rule); every re-scan trigger was checked, and each triggered re-scan ran with `model: sonnet` and was verified.
+- Every scan record passed a `model: opus` verifier; fix and test units ran with `model: sonnet`; Check C came from the lint run, not an agent.
+- Every verified `fix` record was applied or reported unapplied; every `ask` finding was asked with `AskUserQuestion`, and only the answered ones were applied.
 - The check list came dynamically from Phase 1 (no hardcoding).
 - Phase 0 resolved the scope mode; default-mode empty set stopped instead of widening.
