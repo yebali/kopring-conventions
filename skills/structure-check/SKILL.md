@@ -73,7 +73,7 @@ Dispatch **one agent per partition** (`Explore`, all in a single message, `model
 - Per-domain `*NotFoundException` classes (SVC-14), and the layered enums (SVC-27).
 - An authenticated-principal controller parameter that appears unused (CTL-1) — it is the authentication boundary, deliberately kept (STY-20 does not apply to it).
 - `ErrorCode` strings colliding across services (STY-55/57 allow it), unless one client would have to act differently on the same `type`.
-- Per-module test copies of the test support classes, `TestcontainersConfiguration` and architecture/guard tests (TST-2, TST-3).
+- Per-module test copies of the test support classes, container configurations and architecture/guard tests (TST-2, TST-3).
 
 `check-conventions` Phase 3 keeps the same list; keep the two in step.
 

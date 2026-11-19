@@ -4,7 +4,7 @@ Rule text lives in [testing.md](../testing.md) (`TST-*`) and [test-coverage.md](
 
 ## TST-2 — Support classes and Testcontainers
 
-Each module keeps its own `TestcontainersConfiguration` and starts its own containers: PostgreSQL, plus Redis if the module uses it. The wiring rests on three mechanisms:
+Each module keeps its own container configurations and starts its own containers: `PostgresTestcontainersConfiguration` declares PostgreSQL, and `TestcontainersConfiguration` imports it and adds Redis (and the broker) if the module uses them. The wiring rests on three mechanisms:
 
 - **Redis needs `name = "redis"`.** Spring Boot's `RedisContainerConnectionDetailsFactory` does not type-match a plain `GenericContainer`; it matches the `"redis"` connection-name hint, so the bean carries `@ServiceConnection(name = "redis")`. `PostgreSQLContainer` is matched by type and needs no hint. In Testcontainers 2.x `PostgreSQLContainer` is non-generic: declare `PostgreSQLContainer`, not `PostgreSQLContainer<*>`.
 - **A database bootstrap runs in the `@Bean`, after `start()`.** A module that needs a raw-JDBC bootstrap before Hibernate `create-drop` (a `CREATE EXTENSION`, named enum types) runs it inside the postgres `@Bean` body right after `start()`, which precedes the `DataSource` and `EntityManagerFactory` beans. `withInitScript` is not used.
@@ -12,7 +12,7 @@ Each module keeps its own `TestcontainersConfiguration` and starts its own conta
 
 ```kotlin
 @TestConfiguration(proxyBeanMethods = false)
-class TestcontainersConfiguration {
+class PostgresTestcontainersConfiguration {
     @Bean
     @ServiceConnection
     fun postgresContainer(): PostgreSQLContainer =          // 2.x: non-generic, no <*>
@@ -22,12 +22,18 @@ class TestcontainersConfiguration {
             initializeDatabase(this)                         // raw-JDBC bootstrap — before create-drop
         }
 
+    companion object { /* POSTGRES_IMAGE + private bootstrap fns */ }
+}
+
+@TestConfiguration(proxyBeanMethods = false)
+@Import(PostgresTestcontainersConfiguration::class)
+class TestcontainersConfiguration {                          // the full context's containers
     @Bean
     @ServiceConnection(name = "redis")                       // GenericContainer is NOT type-matched
     fun redisContainer(): GenericContainer<*> =
         GenericContainer<Nothing>(REDIS_IMAGE).apply { withExposedPorts(6379) }
 
-    companion object { /* image constants + private bootstrap fns */ }
+    companion object { /* image constants */ }
 }
 
 // the three support classes pull the configuration in — no ApplicationContextInitializer / TestPropertyValues:
@@ -41,10 +47,10 @@ abstract class WebMvcTestSupport {
     @MockkBean protected lateinit var orderFacade: OrderFacade
 }
 
-@DataJpaTest
+@DataJpaTest(showSql = false)
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
-@Import(TestcontainersConfiguration::class, QuerydslConfig::class)
+@Import(PostgresTestcontainersConfiguration::class, QuerydslConfig::class)
 abstract class DataJpaTestSupport { ... }                    // rolled back by the slice
 
 @SpringBootTest
@@ -169,6 +175,18 @@ class OrderCsvParserTest {
         }
     }
 }
+
+// buildCreateOrderCommand lives in PlainTestFixtures (TST-16)
+class CreateOrderCommandTest {
+    @Nested
+    inner class `creation validation` {
+        @ParameterizedTest(name = "quantity {0}")
+        @ValueSource(ints = [0, -1, 1_001])
+        fun `rejects a quantity outside 1 to 1000`(quantity: Int) {
+            assertThatThrownBy { buildCreateOrderCommand(quantity = quantity) }.isInstanceOf(InvalidValueException::class.java)
+        }
+    }
+}
 ```
 
 ## TST-13 — Fixtures in local scope
@@ -269,6 +287,80 @@ assertThatThrownBy { orderService.cancel(command) }
 
 // ❌ asserting the message
 assertThatThrownBy { orderService.cancel(command) }.hasMessage("Order is already shipped")
+```
+
+## TST-29 — Waiting for an effect
+
+```kotlin
+// ❌ an exact count held for the settle time: every run pays SETTLE_DURATION
+await().during(SETTLE_DURATION).atMost(AWAIT_TIMEOUT).untilAsserted {
+    assertThat(paymentReceiptRepository.listByQuery(ListPaymentReceiptQuery(orderId = order.id))).hasSize(1)
+}
+// ✅ the effect is a consumer's processing: await the drained consumer, then count once
+await().pollDelay(Duration.ZERO).atMost(AWAIT_TIMEOUT).untilAsserted { assertConsumerDrained(streamName = ORDER_STREAM, consumerName = PAYMENT_RESULT_CONSUMER) }
+assertThat(paymentReceiptRepository.listByQuery(ListPaymentReceiptQuery(orderId = order.id))).hasSize(1)
+
+// ✅ messages on a stream: read up to an end marker published after the work, then count once
+assertThat(storedMessages(subject = ORDER_SHIPPED, type = OrderShippedMessage::class.java).filter { it.orderId == order.id }).hasSize(1)
+
+// ✅ silence is the contract: nothing more may be sent while the in-flight window is full, so the observation time is the test
+await().during(SETTLE_DURATION).atMost(AWAIT_TIMEOUT).untilAsserted { assertThat(publishCalls.get()).isEqualTo(1) }
+```
+
+The end-marker read with NATS JetStream; the marker subject falls under the stream's subjects.
+
+```kotlin
+// SpringBootTestSupport
+protected fun <T : Any> storedMessages(subject: String, type: Class<T>): List<T> =
+    storedPayloads(subject).map { objectMapper.readValue(it, type) }
+
+protected fun storedPayloads(subject: String): List<String> {
+    val endSubject = "$TEST_END_SUBJECT_PREFIX.${UUID.randomUUID()}"
+    val consumer = connection.getStreamContext(STREAM_NAME)
+        .createOrUpdateConsumer(ConsumerConfiguration.builder().filterSubjects(subject, endSubject).build())
+    jetStream.publish(endSubject, byteArrayOf())              // same connection and stream as the work it follows
+
+    return buildList {
+        val deadline = System.nanoTime() + AWAIT_TIMEOUT.toNanos()
+        while (true) {
+            val remaining = deadline - System.nanoTime()
+            check(remaining > 0) { "Timed out reading $subject up to $endSubject" }
+            val message = checkNotNull(consumer.next(Duration.ofNanos(remaining))) { "Missing end marker $endSubject for $subject" }
+            message.ack()
+            if (message.subject == endSubject) break
+            add(message.data.decodeToString())
+        }
+    }
+}
+```
+
+## TST-34 — Starting a worker for real delivery
+
+```kotlin
+class OrderCommandListenerTest : SpringBootTestSupport() {
+    @AfterEach
+    fun cleanup() {
+        orderCommandListener.stop()                          // a no-op when the test never started it
+    }
+
+    @Test
+    fun `a ship command delivered by the broker ships the order`() {
+        val order = saveOrder()
+        orderCommandListener.start()
+
+        publish(subject = SHIP_ORDER, message = ShipOrderMessage(orderId = order.id))
+
+        await().pollDelay(Duration.ZERO).atMost(AWAIT_TIMEOUT).untilAsserted {
+            assertThat(orderRepository.findByIdOrNull(order.id)?.status).isEqualTo(OrderStatus.SHIPPED)
+        }
+    }
+
+    // a test that calls orderCommandListener.handle(message) directly never subscribes
+
+    private fun publish(subject: String, message: Any) {
+        jetStream.publish(subject, objectMapper.writeValueAsBytes(message))
+    }
+}
 ```
 
 ## COV-4 — Private method via public input

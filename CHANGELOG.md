@@ -2,6 +2,32 @@
 
 Rule identifiers added, changed, removed or renumbered, newest first. A consuming project checks this list when it updates the skill, because its own rule document overrides the skill by identifier.
 
+## 2026-11-19
+
+Test speed. A consuming project cut its pull-request validation from 10 min 40 s to 5 min 42 s (median of three runs) with almost no fewer tests: the time was in what each test repeated (rationale.md, "Test speed"). Several rules asked for that repetition — every container in the JPA slice, a settle window for every negative assertion, Command checks run in the full context. The rules below now ask for the smallest environment and the shortest wait that still prove the same behavior, in the shapes that project shipped.
+
+Adopting these changes in an existing project: split the PostgreSQL container into its own configuration and import it alone in `DataJpaTestSupport`, with `@DataJpaTest(showSql = false)` (TST-2); add `pollDelay(Duration.ZERO)` to every `await()` (TST-29); review each `during(SETTLE_DURATION)` for an end signal (TST-29); move tests that sit in a Spring-backed class but use no bean to the object's plain test (TST-10); start subscribers only in the tests that need real delivery (TST-34).
+
+- **Added** `TST-36`: a test-only speed setting — fork count, test-JVM flags, a cheaper bean, a shorter test-profile window — is chosen per module by measuring it and never replaces the production setting a test verifies. `TST-4` points to it.
+- **Added** testing §14 "Changing tests for speed" (no identifier): what a speed change states about what is still verified, and how it is measured.
+- **Changed** `TST-2`: each support starts only the containers its slice uses — `PostgresTestcontainersConfiguration` for `DataJpaTestSupport`, `TestcontainersConfiguration` (which imports it) for `SpringBootTestSupport`; `@DataJpaTest(showSql = false)`.
+- **Changed** `TST-10`: what the object alone decides (a Command's `init {}` checks, value conversion) is a plain test; a test in a Spring-backed class that uses no bean moves to one. `TST-9` gains the smallest-environment principle.
+- **Changed** `TST-12`: the wipe awaits idle executors and released locks, checking at once, and never pauses for a fixed time.
+- **Changed** `TST-13`: expensive setup is built once within a test — one large read-only fixture for several results, many rows in one `transactionTemplate.execute { }`; an immutable mapper may be a `companion object` `val`.
+- **Changed** `TST-29`: `await().pollDelay(Duration.ZERO)` on every call; the awaited condition is the completion signal of what is asserted; an exact count or absence is asserted once after an end signal (a marker on the same stream, a drained consumer, the stream's last sequence, if the project uses a broker); `during(SETTLE_DURATION)` only where silence is the contract or no signal exists.
+- **Changed** `TST-32`: the input table of a Command's checks lives in its plain test; two parameterized tests with the same setup and call merge with another column; no parameterization over an input the path ignores.
+- **Changed** `TST-34`: a test that needs real delivery starts the worker and stops it in cleanup; `init()` starts it only when every test of the class needs it.
+- **Changed** `COV-1`: one structural-failure case per kind; the input matrix is the Command's plain test.
+- **Changed** `COV-5`: `Command.init {}` validation is tested in the Command's plain test, never a Spring-backed test.
+- **Changed** `COV-7`: two tests with the same setup and the same call that assert different parts of the outcome are one test.
+
+Verified by reading the source: Awaitility 4.3.0 uses the poll interval (100 ms) as the first poll delay when none is set (`ConditionFactory.definePollDelay`); Spring Boot 4.1.2 `@DataJpaTest.showSql` defaults to `true`.
+
+Tooling:
+
+- `check-conventions` Check F: TST-2 checks the JPA slice's PostgreSQL-only import; TST-36 checks that a speed-only bean swap comes in through a support's `@Import`.
+- `test-code`: a changed `Command.init {}` gets its plain test; the controller keeps one structural-failure case per kind.
+
 ## 2026-11-18
 
 - **Changed** `CTL-17`: no verb in a URL path segment. Setting a state is `PUT` on a noun state sub-resource with the target state in the body (`PUT /orders/{id}/status`, `PUT /members/{id}/activation`); the current state again is a 204 no-op, a forbidden transition 409. A recorded event or one-shot command is a `POST` to a noun collection (`/refunds`, `/cancellations`, `/verifications`), and a bulk change a noun `POST`. Adopting it: a verb-path endpoint such as `PUT /orders/{id}/hold` moves to one of these shapes and its clients are told (CTL-33).

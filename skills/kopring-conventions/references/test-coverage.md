@@ -6,7 +6,7 @@
 
 | ID | ⚠ | Rule | Detail |
 |---|---|---|---|
-| COV-1 | | Every endpoint covers each parameter variation against a mocked Service, a missing primitive field included; a missing permission is 403, and each exception the Service can throw maps to its status; a creating POST, a versioned GET and each PUT form add their header and status cases | [§2](#2-controller-coverage) |
+| COV-1 | | Every endpoint covers each parameter variation against a mocked Service, a missing primitive field included, and each structural failure once per kind; a missing permission is 403, and each exception the Service can throw maps to its status; a creating POST, a versioned GET and each PUT form add their header and status cases | [§2](#2-controller-coverage) |
 | COV-2 | | Typed parameter binding is asserted on the Command the mocked Service receives; 401 only for endpoints taking the principal or guarded by the authorization interceptor; a `Unit` endpoint asserts status and headers, never a body field | [§2](#2-controller-coverage) |
 | COV-3 | | Every public Service method has a success test asserting its effect and one failure test per domain exception it throws; a row-scoped method has an out-of-scope case; a PUT covers a stale version and a repeated request | [§3](#3-service-coverage) |
 | COV-4 | | Private branches are reached through public inputs; an unreachable branch is deleted | [§3](#3-service-coverage) |
@@ -28,7 +28,7 @@ How a test is written (support class, `@Nested`, helpers, assertions) is [testin
 | All required values filled | The success status of the endpoint's shape ([CTL-18](controller.md#8-restful-api-design)); the response built from the stubbed Result; the Command carries every value |
 | Optional value omitted (Kotlin nullable or default) | The success status + the Command carries `null` or the default; in a PUT body an omitted nullable field reaches the Command as `null` |
 | Required value missing (raw JSON body, [TST-20](testing.md#8-controller-tests)) | 400 + ErrorCode in `$.type` (`CommonErrorCode.MISSING_REQUIRED_FIELD`); the Service is not called |
-| Format mismatch or a failed structural check (UUID as an arbitrary string, negative page, an over-length value) | 400 + `$.type` (`CommonErrorCode.INVALID_PARAMETER`, [SVC-15](service.md#5-exceptions-and-failure-forms)); the Service is not called |
+| Format mismatch or a failed structural check — one representative input per failure kind (a UUID as an arbitrary string, an over-length value) | 400 + `$.type` (`CommonErrorCode.INVALID_PARAMETER`, [SVC-15](service.md#5-exceptions-and-failure-forms)); the Service is not called; the input matrix is COV-5's |
 | *If the endpoint is permission-gated:* missing endpoint permission (principal without the permission) | 403 + `$.type` (with the authorization interceptor in the slice, COV-2) |
 | A domain exception the Service can throw (stubbed) — not found, out of scope, conflict | Its status + `$.type`, one case per exception type the endpoint's Service method throws |
 
@@ -92,7 +92,7 @@ The following areas can fail silently on regression, so each has a standalone te
 |---|---|---|
 | QueryDSL custom repository (`Custom*RepositoryImpl`) | Repository test | One case per nullable-field branch of the Query object and the `*ByQuery` methods ([REP-9](repository.md#31-multi-condition-reads)) |
 | *If the project uses PostgreSQL JSONB:* the shared JSONB query util | Repository test | Text extraction (JSONB field, nested keys), text sort (no numeric cast), sort direction, null handling |
-| `Command.init {}` structural validation | Service test or Command unit test | `InvalidValueException` on empty list, negative value, format violation, over-length value ([SVC-45](service.md#4-validation)) |
+| `Command.init {}` structural validation | The Command's plain test ([TST-10](testing.md#44-plain-unit-tests)), never a Spring-backed test | `InvalidValueException` on empty list, negative value, format violation, over-length value ([SVC-45](service.md#4-validation)), every check and boundary as a parameterized row |
 | Domain enum mapping (`*EnumMapper`) | Unit test | Bidirectional mapping for every enum value through `@EnumSource`, not a hand-picked subset. Every `*EnumMapper` has its own test file named after the mapper it tests; verify that the file targets that mapper (an `OrderEnumMapperTest` that asserts `PaymentEnumMapper` is a silent zero-coverage hole). Cover name-mismatch arms explicitly (`CANCELED → CANCELLED`): a one-line typo breaks exactly these |
 | Transactional side-effect ordering (`@TransactionalEventListener(phase = AFTER_COMMIT)`) | Service or integration test | Both cases: (1) committed transaction → effect published, (2) rolled-back transaction → effect not published. A commit-only test stays green even when `phase` is wrong; only the rollback test pins AFTER_COMMIT. Also cover the `REQUIRES_NEW` path (effect survives the outer rollback) when the listener uses one |
 | Handler idempotency (a message-broker listener or `@TransactionalEventListener` on redeliverable messages, [SVC-26](service.md#8-writes-duplicates-and-idempotency)) | Service or integration test | The same message processed twice leaves the state identical to once (no duplicate rows); the dedup key or UNIQUE constraint is enforced |
@@ -102,7 +102,7 @@ The following areas can fail silently on regression, so each has a standalone te
 
 **COV-9** — Service and Facade tests replace every Feign client with a `@MockkBean` (TST-3), so a client's own behavior — the request it builds (path, query, headers, body) and its `ErrorDecoder` (CTL-26), which turns a remote status into a domain exception — runs in no test. Each client gets one adapter test against a stub HTTP server (WireMock or the project's equivalent): one case per method asserting the recorded request, and one per status the `ErrorDecoder` maps, asserting the exception. The test builds the client outside the Spring context with the same contract, codec and `ErrorDecoder` (`Feign.builder()…target(OrderClient::class.java, stubUrl)`), as a plain unit test (TST-10), because the shared context holds the client as a mock.
 
-**COV-10** — Tests build their schema from the entities (`ddl-auto: create-drop`), so a migration that does not match the mapping first fails when a deployed service boots, and a constraint that exists only in the migrations (REP-28's partial unique index) exists in no test. Each module with migrations has one guard test that starts its own PostgreSQL container, runs Flyway, and boots the persistence layer with `ddl-auto=validate` against it — the one context TST-33 lets fork. It also asserts the migration-only constraints: a duplicate active value is rejected, a soft-deleted one is not.
+**COV-10** — Tests build their schema from the entities (`ddl-auto: create-drop`), so a migration that does not match the mapping first fails when a deployed service boots, and a constraint that exists only in the migrations (REP-28's partial unique index) exists in no test. Each module with migrations has one guard test that starts its own PostgreSQL container (from the image constant of the module's `PostgresTestcontainersConfiguration`, TST-2), runs Flyway, and boots the persistence layer with `ddl-auto=validate` against it — the one context TST-33 lets fork. It also asserts the migration-only constraints: a duplicate active value is rejected, a soft-deleted one is not.
 
 ## 5. Tests not to write
 
@@ -128,8 +128,9 @@ The following areas can fail silently on regression, so each has a standalone te
 | The same logic tested at different layers (Controller, Service, Repository) | Two test groups in the same class with identical assertions |
 | Similar structure across different domains (`OrderServiceTest` vs `PaymentServiceTest`) | A "method-axis" and a "role-axis" test for the same permission matrix |
 | Several input values in one parameterized test ([TST-32](testing.md#12-parameterization)) | A separate test per input value when the code path is identical |
+| Separate tests when success and failure leave different side effects or need a different setup | Two tests with the same setup and the same call that assert different parts of its outcome — one test asserts both (shipping an order: its status, its shipped-at time and the stock it released) |
 
-Detection: when two `@Nested` groups produce the same pass/fail matrix (same methods × same permission levels), one of them is redundant.
+Detection: when two `@Nested` groups produce the same pass/fail matrix (same methods × same permission levels), one of them is redundant. A change that merges or moves tests states where each case is verified now ([testing §14](testing.md#14-changing-tests-for-speed)).
 
 ## 7. Regression signal check
 
