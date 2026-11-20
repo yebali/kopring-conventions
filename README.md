@@ -8,7 +8,7 @@ Kotlin + Spring Boot coding conventions as agent skills: controllers, services, 
 |---|---|
 | `kopring-conventions` | Write, review or refactor Kotlin Spring Boot code. Holds the rule references, worked examples and `scripts/convention-lint.sh`. |
 | `coding-workflow` | Set the baseline for any coding task: apply the rules while writing, run the lint before saying done, plan and review parallel subagent work. |
-| `check-conventions` | Audit production and test code (and `application*.yml`) against the rules, fix the violations a rule decides, write missing tests and ask about the rest. It edits code. |
+| `check-conventions` | Audit production and test code (and `application*.yml`) against the rules, fix the violations a rule decides, write missing tests, and ask about the rest — or, in strict mode, apply what the rules lean toward. It edits code. |
 | `structure-check` | Find code that follows every rule yet is too complex or tangled, and write a refactoring plan. It never edits code. |
 | `sync-docs` | Find where the markdown docs no longer match the code and fix the docs. It never edits code. |
 | `test-code` | Write the controller, Service, Facade and repository tests for the code changed in the current diff, following the testing and coverage rules. |
